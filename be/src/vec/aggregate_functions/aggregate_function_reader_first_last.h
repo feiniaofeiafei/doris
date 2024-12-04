@@ -65,6 +65,8 @@ public:
         _offset = 0;
     }
 
+    size_t offset_pos() { return _offset; }
+
 protected:
     const IColumn* _ptr = nullptr;
     size_t _offset = 0;
@@ -99,6 +101,8 @@ public:
             column->get(row, _copied_value);
         }
     }
+
+    size_t offset_pos() { return 0; }
 
 private:
     Field _copied_value;
@@ -140,6 +144,10 @@ public:
     }
 
     bool has_set_value() { return _has_value; }
+
+    size_t offset_pos() { return _data_value.offset_pos(); }
+
+    bool is_null() { return _data_value.is_null(); }
 
 protected:
     StoreType _data_value;
