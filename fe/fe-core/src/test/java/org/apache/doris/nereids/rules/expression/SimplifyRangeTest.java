@@ -73,6 +73,9 @@ public class SimplifyRangeTest extends ExpressionRewrite {
         assertRewrite("TA > 3 or TA = null", "TA > 3 OR NULL");
         assertRewrite("TA > 3 or TA <> null", "TA > 3 or null");
         assertRewrite("TA > 3 or TA <=> null", "TA > 3 or TA <=> null");
+        assertRewrite("(TA < 1 or TA > 2) or (TA >= 0 and TA <= 3)", "TA IS NOT NULL OR NULL");
+        assertRewrite("TA between 10 and 20 or TA between 100 and 120 or TA between 15 and 25 or TA between 115 and 125",
+                "TA >= 10 and TA <= 25 or TA >= 100 and TA <= 125");
         assertRewriteNotNull("TA > 3 and TA > null", "TA > 3 and NULL");
         assertRewriteNotNull("TA > 3 and TA < null", "TA > 3 and NULL");
         assertRewriteNotNull("TA > 3 and TA = null", "TA > 3 and NULL");
@@ -200,7 +203,6 @@ public class SimplifyRangeTest extends ExpressionRewrite {
         assertRewrite("(TA + TC > 3 OR TA < 1) AND TB = 2) AND IA =1", "(TA + TC > 3 OR TA < 1) AND TB = 2) AND IA =1");
         assertRewrite("SA = '20250101' and SA < '20200101'", "SA is null and null");
         assertRewrite("SA > '20250101' and SA > '20260110'", "SA > '20260110'");
-
     }
 
     @Test
@@ -396,6 +398,14 @@ public class SimplifyRangeTest extends ExpressionRewrite {
         expectedExpression = typeCoercion(expectedExpression);
         Expression rewrittenExpression = executor.rewrite(needRewriteExpression, context);
         Assertions.assertEquals(expectedExpression, rewrittenExpression);
+    }
+
+    private Expression rewriteExpression(String expression, boolean nullable) {
+        Map<String, Slot> mem = Maps.newHashMap();
+        Expression needRewriteExpression = PARSER.parseExpression(expression);
+        needRewriteExpression = nullable ? replaceUnboundSlot(needRewriteExpression, mem) : replaceNotNullUnboundSlot(needRewriteExpression, mem);
+        needRewriteExpression = typeCoercion(needRewriteExpression);
+        return executor.rewrite(needRewriteExpression, context);
     }
 
     private Expression replaceUnboundSlot(Expression expression, Map<String, Slot> mem) {
