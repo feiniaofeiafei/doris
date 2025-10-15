@@ -80,11 +80,11 @@ suite("test_jdbc_catalog_ddl", "p0,external,mysql,external_docker,external_docke
             // test wrong catalog and db
             test {
                 sql """switch unknown_catalog"""
-                exception "Unknown catalog 'unknown_catalog'"
+                exception "Unknown catalog unknown_catalog"
             }
             test {
                 sql """use unknown_catalog.db1"""
-                exception """Unknown catalog 'unknown_catalog'"""
+                exception """Unknown catalog unknown_catalog"""
             }
             test {
                 sql """use ${catalog_name}.unknown_db"""
