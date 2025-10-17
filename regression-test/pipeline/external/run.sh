@@ -13,7 +13,7 @@ fi
 EOF
 ############################# run.sh content ########################################
 # shellcheck source=/dev/null
-# _monitor_regression_log, print_running_pipeline_tasks
+# _monitor_regression_log, print_running_pipeline_tasks, _get_ip
 source "${teamcity_build_checkoutDir}"/regression-test/pipeline/common/doris-utils.sh
 # shellcheck source=/dev/null
 # create_an_issue_comment
@@ -48,6 +48,8 @@ DORIS_HOME="${teamcity_build_checkoutDir}/output"
 export DORIS_HOME
 exit_flag=0
 need_collect_log=false
+my_ip="$(_get_ip)"
+export my_ip
 
 # monitoring the log files in "${DORIS_HOME}"/regression-test/log/ for keyword 'Reach limit of connections'
 _monitor_regression_log &
@@ -70,6 +72,9 @@ run() {
         echo "aliYunSk='${aliYunSk:-}'"
         echo "AWSAK='${AWSAK:-}'"
         echo "AWSSK='${AWSSK:-}'"
+        echo "// externalEnvIp should use eth0 IP 172.xx.xx.xx instead of 127.0.0.1"
+        echo "externalEnvIp='${my_ip:-}'"
+        echo
     } >>"${teamcity_build_checkoutDir}"/regression-test/pipeline/external/conf/regression-conf-custom.groovy
     cp -f "${teamcity_build_checkoutDir}"/regression-test/pipeline/external/conf/regression-conf-custom.groovy \
         "${teamcity_build_checkoutDir}"/regression-test/conf/

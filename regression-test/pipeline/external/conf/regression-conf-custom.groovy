@@ -41,14 +41,14 @@ trinoPluginsPath = "/tmp/trino_connector"
 
 // will test <group>/<suite>.groovy
 // empty group will test all group
-testGroups = "external"
+testGroups = "external_docker"
 // empty suite will test all suite
 testSuites = ""
 // empty directories will test all directories
 testDirectories = ""
 
 // this groups will not be executed
-excludeGroups = ""
+excludeGroups = "p2"
 // this suites will not be executed
 // load_stream_fault_injection may cause bad disk
 
