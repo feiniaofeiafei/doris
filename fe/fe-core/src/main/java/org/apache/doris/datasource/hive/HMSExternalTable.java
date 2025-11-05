@@ -917,7 +917,7 @@ public class HMSExternalTable extends ExternalTable implements MTMVRelatedTableI
         List<HivePartition> partitionList = cache.getAllPartitionsWithCache(getDbName(), getName(),
                 Lists.newArrayList(hivePartitionValues.getPartitionValuesMap().values()));
         if (CollectionUtils.isEmpty(partitionList)) {
-            throw new AnalysisException("partitionList is empty, table name: " + getName());
+            return new MTMVMaxTimestampSnapshot(getName(), 0L);
         }
         for (HivePartition hivePartition : partitionList) {
             visibleVersionTime = hivePartition.getLastModifiedTime();
