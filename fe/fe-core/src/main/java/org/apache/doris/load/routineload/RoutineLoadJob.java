@@ -832,7 +832,7 @@ public abstract class RoutineLoadJob
                     // and after renew, the previous task is removed from routineLoadTaskInfoList,
                     // so task can no longer be committed successfully.
                     // the already committed task will not be handled here.
-                    RoutineLoadTaskInfo newTask = unprotectRenewTask(routineLoadTaskInfo);
+                    RoutineLoadTaskInfo newTask = unprotectRenewTask(routineLoadTaskInfo, false);
                     Env.getCurrentEnv().getRoutineLoadTaskScheduler().addTaskInQueue(newTask);
                 }
             }
@@ -1012,7 +1012,7 @@ public abstract class RoutineLoadJob
         return 0L;
     }
 
-    abstract RoutineLoadTaskInfo unprotectRenewTask(RoutineLoadTaskInfo routineLoadTaskInfo);
+    abstract RoutineLoadTaskInfo unprotectRenewTask(RoutineLoadTaskInfo routineLoadTaskInfo, boolean delaySchedule);
 
     // call before first scheduling
     // derived class can override this.
@@ -1232,7 +1232,7 @@ public abstract class RoutineLoadJob
             }
 
             // create new task
-            RoutineLoadTaskInfo newRoutineLoadTaskInfo = unprotectRenewTask(routineLoadTaskInfo);
+            RoutineLoadTaskInfo newRoutineLoadTaskInfo = unprotectRenewTask(routineLoadTaskInfo, false);
             Env.getCurrentEnv().getRoutineLoadTaskScheduler().addTaskInQueue(newRoutineLoadTaskInfo);
         } finally {
             writeUnlock();
@@ -1384,7 +1384,7 @@ public abstract class RoutineLoadJob
 
         if (state == JobState.RUNNING) {
             if (txnStatus == TransactionStatus.ABORTED) {
-                RoutineLoadTaskInfo newRoutineLoadTaskInfo = unprotectRenewTask(routineLoadTaskInfo);
+                RoutineLoadTaskInfo newRoutineLoadTaskInfo = unprotectRenewTask(routineLoadTaskInfo, true);
                 Env.getCurrentEnv().getRoutineLoadTaskScheduler().addTaskInQueue(newRoutineLoadTaskInfo);
             } else if (txnStatus == TransactionStatus.COMMITTED) {
                 // this txn is just COMMITTED, create new task when the this txn is VISIBLE
