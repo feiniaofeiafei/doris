@@ -731,6 +731,8 @@ public class SessionVariable implements Serializable, Writable {
     public static final String PREFER_UDF_OVER_BUILTIN = "prefer_udf_over_builtin";
     public static final String ENABLE_ADD_INDEX_FOR_NEW_DATA = "enable_add_index_for_new_data";
 
+    public static final String MERGE_IO_READ_SLICE_SIZE = "merge_io_read_slice_size";
+
     /**
      * If set false, user couldn't submit analyze SQL and FE won't allocate any related resources.
      */
@@ -2187,6 +2189,10 @@ public class SessionVariable implements Serializable, Writable {
     private boolean enableCountPushDownForExternalTable = true;
 
     public static final String IGNORE_RUNTIME_FILTER_IDS = "ignore_runtime_filter_ids";
+
+    @VariableMgr.VarAttr(name = MERGE_IO_READ_SLICE_SIZE, description = {"调整 READ_SLICE_SIZE 大小，降低 Merge IO 读放大影响",
+            "Make the READ_SLICE_SIZE variable configurable to reduce the impact caused by read amplification."})
+    public int mergeReadSliceSize = 8388608;
 
     public Set<Integer> getIgnoredRuntimeFilterIds() {
         Set<Integer> ids = Sets.newLinkedHashSet();
@@ -4192,6 +4198,7 @@ public class SessionVariable implements Serializable, Writable {
         tResult.setIgnoreRuntimeFilterError(ignoreRuntimeFilterError);
 
         tResult.setNewIsIpAddressInRange(newIsIpAddressInRange);
+        tResult.setMergeReadSliceSize(mergeReadSliceSize);
 
         return tResult;
     }
