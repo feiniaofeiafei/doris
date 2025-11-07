@@ -52,6 +52,7 @@ public abstract class PaimonExternalCatalog extends ExternalCatalog {
     public static final String PAIMON_FILESYSTEM = "filesystem";
     public static final String PAIMON_HMS = "hms";
     public static final String PAIMON_DLF = "dlf";
+    public static final String PAIMON_REST = "rest";
     protected String catalogType;
     protected Catalog catalog;
     protected AuthenticationConfig authConf;

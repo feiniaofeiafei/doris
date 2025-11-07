@@ -28,6 +28,7 @@ import org.apache.doris.datasource.FileQueryScanNode;
 import org.apache.doris.datasource.FileSplitter;
 import org.apache.doris.datasource.paimon.PaimonExternalCatalog;
 import org.apache.doris.datasource.paimon.PaimonExternalTable;
+import org.apache.doris.datasource.paimon.PaimonOssCredentialExtractor;
 import org.apache.doris.planner.PlanNodeId;
 import org.apache.doris.qe.SessionVariable;
 import org.apache.doris.spi.Split;
@@ -381,7 +382,26 @@ public class PaimonScanNode extends FileQueryScanNode {
                 map.put(k, v);
             }
         });
+        if (isRestCatalogWithVendedCredential(map)) {
+            Map<String, String> cred = PaimonOssCredentialExtractor.extractVendedCredentialsFromTable(
+                    source.getPaimonTable());
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Paimon table {} use vended credentials, extracted credentials: {}",
+                        source.getTargetTable().getName(), cred);
+            }
+            map.putAll(cred);
+        }
         return map;
+    }
+
+    private boolean isRestCatalogWithVendedCredential(HashMap<String, String> map) {
+        if (map.containsKey("paimon.catalog.type")
+                && map.get("paimon.catalog.type").equals("rest")
+                && map.containsKey("paimon.rest.token.provider")
+                && map.get("paimon.rest.token.provider").equals("dlf")) {
+            return true;
+        }
+        return false;
     }
 
     @Override
