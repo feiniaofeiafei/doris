@@ -782,7 +782,6 @@ public abstract class ExternalCatalog
         if (threadPoolWithPreAuth != null) {
             ThreadPoolManager.shutdownExecutorService(threadPoolWithPreAuth);
         }
-        CatalogIf.super.onClose();
     }
 
     private void removeAccessController() {
