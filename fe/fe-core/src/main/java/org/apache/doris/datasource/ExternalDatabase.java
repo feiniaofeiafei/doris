@@ -172,15 +172,13 @@ public abstract class ExternalDatabase<T extends ExternalTable>
                                     name,
                                     OptionalLong.of(86400L),
                                     OptionalLong.of(Config.external_cache_expire_time_minutes_after_access * 60L),
-                                    Config.max_meta_object_cache_num,
+                                    Math.max(Config.max_meta_object_cache_num, 1),
                                     ignored -> listTableNames(),
                                     localTableName -> Optional.ofNullable(
                                             buildTableForInit(null, localTableName,
                                                     Util.genIdByName(extCatalog.getName(), name, localTableName),
                                                     extCatalog,
-                                                    this, true)),
-                                    (key, value, cause)
-                                            -> value.ifPresent(ExternalTable::unsetObjectCreated));
+                                                    this, true)), null);
                         }
                         setLastUpdateTime(System.currentTimeMillis());
                     } else {
