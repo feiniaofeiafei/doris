@@ -597,13 +597,8 @@ void convert_from_decimal(typename ToDataType::FieldType* dst,
         } else {
             auto multiplier = FromDataType::get_scale_multiplier(scale);
             for (size_t i = 0; i < size; ++i) {
-                if constexpr (IsDecimal256<FromFieldType>) {
-                    dst[i] = static_cast<ToFieldType>(static_cast<long double>(src[i].value) /
-                                                      static_cast<long double>(multiplier.value));
-                } else {
-                    dst[i] = static_cast<ToFieldType>(static_cast<double>(src[i].value) /
-                                                      static_cast<double>(multiplier.value));
-                }
+                dst[i] = static_cast<ToFieldType>(static_cast<double>(src[i].value) /
+                                                  static_cast<double>(multiplier.value));
             }
         }
         if constexpr (narrow_integral) {
@@ -611,9 +606,15 @@ void convert_from_decimal(typename ToDataType::FieldType* dst,
             for (size_t i = 0; i < size; i++) {
                 if (std::isnan(dst[i]) || std::isinf(dst[i]) || dst[i] < min_result ||
                     dst[i] > max_result) {
-                    THROW_DECIMAL_CONVERT_OVERFLOW_EXCEPTION(from_data_type.to_string(src[i]),
-                                                             from_data_type.get_name(),
-                                                             ToDataType {}.get_name());
+                    throw Exception(
+                            ErrorCode::ARITHMETIC_OVERFLOW_ERRROR,
+                            "Arithmetic overflow when converting value {} from type {} to type {}, "
+                            "{}",
+                            from_data_type.to_string(src[i]), from_data_type.get_name(),
+                            ToDataType {}.get_name(),
+                            fmt::format(""
+                                        "result is {}, result value range: [{}, {}]",
+                                        dst[i], min_result, max_result));
                 }
             }
         }
