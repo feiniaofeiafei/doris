@@ -150,3 +150,4 @@ suite("test_conditional_function") {
 
     sql "DROP TABLE ${tbName};"
 }
+
