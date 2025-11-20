@@ -175,7 +175,8 @@ function start_doris_fe() {
         if ! command -v unzip >/dev/null; then sudo apt update && sudo apt install -y unzip; fi
         unzip -o jacoco-0.8.13.zip -d /usr/local/jacoco/ >/dev/null
     fi
-    export JACOCO_COVERAGE_OPT="-javaagent:/usr/local/jacoco/lib/jacocoagent.jar=excludes=org.apache.doris.thrift:org.apache.doris.proto:org.apache.parquet.format:com.aliyun*:com.amazonaws*:org.apache.hadoop.hive.metastore:org.apache.parquet.format,output=file,append=true,destfile=${DORIS_HOME}/fe/fe_cov.exec"
+    # http://39.106.86.136:8090/browse/DORIS-21526
+    export JACOCO_COVERAGE_OPT="-javaagent:/usr/local/jacoco/lib/jacocoagent.jar=excludes=org.apache.doris.thrift:org.apache.doris.proto:org.apache.parquet.format:com.aliyun*:com.amazonaws*:org.apache.hadoop.hive.metastore:org.apache.parquet.format:org.apache.paimon.*:org.apache.iceberg.*,output=file,append=true,destfile=${DORIS_HOME}fe/fe_cov.exec"
     "${DORIS_HOME}"/fe/bin/start_fe.sh --daemon
 
     if ! mysql --version >/dev/null; then sudo apt update && sudo apt install -y mysql-client; fi
