@@ -117,12 +117,21 @@ public class AdjustNullable extends DefaultPlanRewriter<Map<ExprId, Slot>> imple
     @Override
     public Plan visitLogicalJoin(LogicalJoin<? extends Plan, ? extends Plan> join, Map<ExprId, Slot> replaceMap) {
         join = (LogicalJoin<? extends Plan, ? extends Plan>) super.visit(join, replaceMap);
-        List<Expression> hashConjuncts = updateExpressions(join.getHashJoinConjuncts(), replaceMap);
+        return doVisitLogicalJoin(join, replaceMap);
+    }
+
+    /**
+     * Adjust join nullable attribute of slot reference in expression.
+     */
+    public static LogicalJoin<? extends Plan, ? extends Plan> doVisitLogicalJoin(
+            LogicalJoin<? extends Plan, ? extends Plan> join,
+            Map<ExprId, Slot> replaceMap) {
+        List<Expression> hashConjuncts = doUpdateExpressions(join.getHashJoinConjuncts(), replaceMap);
         List<Expression> markConjuncts;
         if (hashConjuncts.isEmpty()) {
             // if hashConjuncts is empty, mark join conjuncts may used to build hash table
             // so need call updateExpressions for mark join conjuncts before adjust nullable by output slot
-            markConjuncts = updateExpressions(join.getMarkJoinConjuncts(), replaceMap);
+            markConjuncts = doUpdateExpressions(join.getMarkJoinConjuncts(), replaceMap);
         } else {
             markConjuncts = null;
         }
@@ -130,11 +139,11 @@ public class AdjustNullable extends DefaultPlanRewriter<Map<ExprId, Slot>> imple
         if (markConjuncts == null) {
             // hashConjuncts is not empty, mark join conjuncts are processed like other join conjuncts
             Preconditions.checkState(!hashConjuncts.isEmpty(), "hash conjuncts should not be empty");
-            markConjuncts = updateExpressions(join.getMarkJoinConjuncts(), replaceMap);
+            markConjuncts = doUpdateExpressions(join.getMarkJoinConjuncts(), replaceMap);
         }
-        List<Expression> otherConjuncts = updateExpressions(join.getOtherJoinConjuncts(), replaceMap);
-        return join.withJoinConjuncts(hashConjuncts, otherConjuncts, markConjuncts,
-                    join.getJoinReorderContext()).recomputeLogicalProperties();
+        List<Expression> otherConjuncts = doUpdateExpressions(join.getOtherJoinConjuncts(), replaceMap);
+        return (LogicalJoin<? extends Plan, ? extends Plan>) join.withJoinConjuncts(hashConjuncts, otherConjuncts,
+                markConjuncts, join.getJoinReorderContext()).recomputeLogicalProperties();
     }
 
     @Override
@@ -292,6 +301,22 @@ public class AdjustNullable extends DefaultPlanRewriter<Map<ExprId, Slot>> imple
         ImmutableSet.Builder<T> result = ImmutableSet.builderWithExpectedSize(inputs.size());
         for (T input : inputs) {
             result.add(updateExpression(input, replaceMap));
+        }
+        return result.build();
+    }
+
+    private static Expression doUpdateExpression(Expression input, Map<ExprId, Slot> replaceMap) {
+        return input.rewriteDownShortCircuit(e -> e.accept(SlotReferenceReplacer.INSTANCE, replaceMap));
+    }
+
+    /**
+     * Static methods cannot use generics, so the following method was added
+     */
+    private static List<Expression> doUpdateExpressions(List<Expression> inputs,
+            Map<ExprId, Slot> replaceMap) {
+        ImmutableList.Builder<Expression> result = ImmutableList.builderWithExpectedSize(inputs.size());
+        for (Expression input : inputs) {
+            result.add(doUpdateExpression(input, replaceMap));
         }
         return result.build();
     }
