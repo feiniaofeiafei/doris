@@ -34,7 +34,6 @@ import org.apache.doris.nereids.trees.expressions.OrderExpression;
 import org.apache.doris.nereids.trees.expressions.Slot;
 import org.apache.doris.nereids.trees.expressions.SlotReference;
 import org.apache.doris.nereids.trees.plans.DistributeType;
-import org.apache.doris.nereids.trees.plans.GroupPlan;
 import org.apache.doris.nereids.trees.plans.Plan;
 import org.apache.doris.nereids.trees.plans.algebra.SetOperation;
 import org.apache.doris.nereids.trees.plans.physical.AbstractPhysicalSort;
@@ -465,29 +464,31 @@ public class RequestPropertyDeriver extends PlanVisitor<Void, PlanContext> {
                     return null;
                 }
             }
-            Statistics childStats = agg.getGroupExpression().get().childStatistics(0);
-            boolean hasRepeat = false;
-            for (Expression expr : agg.getGroupByExpressions()) {
-                if (expr.getExpressionName().equals("g_r_o_u_p_i_n_g__i_d")) {
-                    hasRepeat = true;
-                    break;
-                }
-            }
-            //找到一个最大的ndv的列
-            if (!hasRepeat) {
-                Expression maxNdvCol = agg.getGroupByExpressions().get(0);
-                ColumnStatistic maxColNdvStats = childStats.findColumnStatistics(maxNdvCol);
+            if (context.getStatementContext().getConnectContext().getSessionVariable().groupConcatMaxLen == 1) {
+                Statistics childStats = agg.getGroupExpression().get().childStatistics(0);
+                boolean hasRepeat = false;
                 for (Expression expr : agg.getGroupByExpressions()) {
-                    ColumnStatistic colStats = childStats.findColumnStatistics(expr);
-                    if (colStats == null) {
-                        continue;
-                    }
-                    if (colStats.ndv > maxColNdvStats.ndv) {
-                        maxNdvCol = expr;
-                        maxColNdvStats = colStats;
+                    if (expr.getExpressionName().equals("g_r_o_u_p_i_n_g__i_d")) {
+                        hasRepeat = true;
+                        break;
                     }
                 }
-                groupByExprIds = ImmutableList.of(((Slot) maxNdvCol).getExprId());
+                //找到一个最大的ndv的列
+                if (!hasRepeat) {
+                    Expression maxNdvCol = agg.getGroupByExpressions().get(0);
+                    ColumnStatistic maxColNdvStats = childStats.findColumnStatistics(maxNdvCol);
+                    for (Expression expr : agg.getGroupByExpressions()) {
+                        ColumnStatistic colStats = childStats.findColumnStatistics(expr);
+                        if (colStats == null) {
+                            continue;
+                        }
+                        if (colStats.ndv > maxColNdvStats.ndv) {
+                            maxNdvCol = expr;
+                            maxColNdvStats = colStats;
+                        }
+                    }
+                    groupByExprIds = ImmutableList.of(((Slot) maxNdvCol).getExprId());
+                }
             }
             addRequestPropertyToChildren(PhysicalProperties.createHash(groupByExprIds, ShuffleType.REQUIRE));
             return null;
