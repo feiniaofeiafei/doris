@@ -22,6 +22,7 @@ import org.apache.doris.nereids.PlanContext;
 import org.apache.doris.nereids.hint.DistributeHint;
 import org.apache.doris.nereids.hint.Hint;
 import org.apache.doris.nereids.jobs.JobContext;
+import org.apache.doris.nereids.memo.Group;
 import org.apache.doris.nereids.memo.GroupExpression;
 import org.apache.doris.nereids.properties.DistributionSpecHash.ShuffleType;
 import org.apache.doris.nereids.rules.implementation.LogicalWindowToPhysicalWindow.WindowFrameGroup;
@@ -63,6 +64,7 @@ import org.apache.doris.nereids.util.AggregateUtils;
 import org.apache.doris.nereids.util.JoinUtils;
 import org.apache.doris.nereids.util.Utils;
 import org.apache.doris.qe.ConnectContext;
+import org.apache.doris.statistics.ColumnStatistic;
 import org.apache.doris.statistics.Statistics;
 
 import com.google.common.base.Preconditions;
@@ -463,10 +465,80 @@ public class RequestPropertyDeriver extends PlanVisitor<Void, PlanContext> {
                     return null;
                 }
             }
-            addRequestPropertyToChildren(PhysicalProperties.createHash(groupByExprIds, ShuffleType.REQUIRE));
-            return null;
+
+            Optional<Statistics> childStats = getGlobalAggChildStats(agg);
+            if (!childStats.isPresent()) {
+                addRequestPropertyToChildren(PhysicalProperties.createHash(groupByExprIds, ShuffleType.REQUIRE));
+                return null;
+            } else {
+                // 这里选一个ndv最大，并且不倾斜的key作为gby key
+                // 需要拿到child节点的孩子的行数统计信息，和gby key的ndv信息，
+                // 如果gby key的数量比较多，5个以上吧（这个值可以设置成可配置的），就选ndv最大的那个key作为gby key
+                // 如果没有repeat才这样做（后期可以尝试放宽）
+                // 需要考虑选中的key是否有null倾斜，以及hotValue
+                // 需要拿到total instance number，然后计算每个instance大概多少行数据，计算普通节点rows/倾斜节点rows>2/3的话，
+                // 即普通节点rows/最大的倾斜值rows> 2, 这个时候我们才会选择这个key作为gby key
+                // 可以先不管hotValue吧,先计算null，
+                if (agg.getGroupByExpressions().size() <= 5 || agg.hasSourceRepeat()) {
+                    addRequestPropertyToChildren(PhysicalProperties.createHash(groupByExprIds, ShuffleType.REQUIRE));
+                    return null;
+                }
+                double childRows = childStats.get().getRowCount();
+                int instanceNum = ConnectContext.getTotalInstanceNum(context.getConnectContext());
+
+                ExprId bestGbyKey = null;
+                double bestNdv = -1L;
+                for (Expression groupByExpr : agg.getGroupByExpressions()) {
+                    if (!(groupByExpr instanceof SlotReference)) {
+                        continue;
+                    }
+                    SlotReference slotRef = (SlotReference) groupByExpr;
+                    ColumnStatistic columnStatistic = childStats.get().findColumnStatistics(slotRef);
+                    if (columnStatistic == null) {
+                        continue;
+                    }
+                    double ndv = columnStatistic.ndv;
+                    if (ndv > bestNdv) {
+                        // check skew
+                        double nullsCount = columnStatistic.numNulls;
+                        double rowsPerInstance = (childRows - nullsCount) / instanceNum;
+                        double maxSkewFactor = nullsCount == 0 ? Double.MAX_VALUE : rowsPerInstance / nullsCount;
+                        if (maxSkewFactor > 2.0 && ndv > instanceNum) {
+                            bestNdv = ndv;
+                            bestGbyKey = slotRef.getExprId();
+                        }
+                    }
+                }
+                if (-1L == bestNdv) {
+                    addRequestPropertyToChildren(PhysicalProperties.createHash(groupByExprIds, ShuffleType.REQUIRE));
+                    return null;
+                }
+                if (bestGbyKey != null) {
+                    addRequestPropertyToChildren(PhysicalProperties.createHash(
+                            ImmutableList.of(bestGbyKey), ShuffleType.REQUIRE));
+                    return null;
+                }
+            }
         }
         return null;
+    }
+
+    // 入参是global agg，返回值是拿到local agg的孩子的统计信息
+    private Optional<Statistics> getGlobalAggChildStats(PhysicalHashAggregate<? extends Plan> agg) {
+        Optional<GroupExpression> groupExpression = agg.getGroupExpression();
+        if (!groupExpression.isPresent()) {
+            return Optional.empty();
+        }
+        Statistics aggChildStats = groupExpression.get().childStatistics(0);
+        // 拿到local AGG孩子的统计信息
+        Group childGroup = groupExpression.get().child(0);
+        Plan childExpression = childGroup.getPhysicalExpressions().get(0).getPlan();
+        if (childExpression instanceof PhysicalHashAggregate
+                && ((PhysicalHashAggregate) childExpression).getAggPhase().isLocal()) {
+            childGroup = childGroup.getPhysicalExpressions().get(0).child(0);
+            aggChildStats = childGroup.getStatistics();
+        }
+        return Optional.of(aggChildStats);
     }
 
     private boolean shouldUseParent(List<ExprId> parentHashExprIds, PhysicalHashAggregate<? extends Plan> agg,
