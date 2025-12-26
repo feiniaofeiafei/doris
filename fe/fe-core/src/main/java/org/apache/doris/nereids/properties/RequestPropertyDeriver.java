@@ -467,7 +467,7 @@ public class RequestPropertyDeriver extends PlanVisitor<Void, PlanContext> {
             }
 
             Optional<Statistics> childStats = getGlobalAggChildStats(agg);
-            if (!childStats.isPresent()) {
+            if (!childStats.isPresent() || !connectContext.getSessionVariable().chooseOneAggShuffleKey) {
                 addRequestPropertyToChildren(PhysicalProperties.createHash(groupByExprIds, ShuffleType.REQUIRE));
                 return null;
             } else {
