@@ -860,6 +860,7 @@ public class SessionVariable implements Serializable, Writable {
     public static final String AGG_SHUFFLE_USE_PARENT_KEY = "agg_shuffle_use_parent_key";
     public static final String DECOMPOSE_REPEAT_SHUFFLE_INDEX_IN_MAX_GROUP
             = "decompose_repeat_shuffle_index_in_max_group";
+    public static final String ENABLE_AGG_SHUFFLE_KEY_PRUNE = "enable_agg_shuffle_key_prune";
 
     public static final String HOT_VALUE_COLLECT_COUNT = "hot_value_collect_count";
     @VariableMgr.VarAttr(name = HOT_VALUE_COLLECT_COUNT, needForward = true,
@@ -2860,6 +2861,9 @@ public class SessionVariable implements Serializable, Writable {
     }, needForward = false)
     public boolean aggShuffleUseParentKey = true;
 
+    @VariableMgr.VarAttr(name = ENABLE_AGG_SHUFFLE_KEY_PRUNE)
+    public boolean enableAggShuffleKeyPrune = true;
+
     @VariableMgr.VarAttr(name = ENABLE_PREFER_CACHED_ROWSET, needForward = false,
             description = {"是否启用 prefer cached rowset 功能",
                     "Whether to enable prefer cached rowset feature"})
@@ -3511,6 +3515,14 @@ public class SessionVariable implements Serializable, Writable {
                             + "to exclude the impact of dangling delete files."})
     public boolean ignoreIcebergDanglingDelete = false;
 
+    public static final String SHUFFLE_KEY_PRUNE_THRESHOLD = "shuffle_key_prune_threshold";
+    @VariableMgr.VarAttr(name = SHUFFLE_KEY_PRUNE_THRESHOLD,
+            description = {"控制在聚合或连接操作中进行 shuffle key 裁剪的阈值。"
+                    + "当 shuffle key 的数量大于该阈值时，启用裁剪以减少哈希分发的开销。",
+                    "Controls the threshold for shuffle key pruning during aggregation or join operations. "
+                    + "Pruning is enabled when the number of shuffle keys exceeds this threshold to reduce "
+                    + "the overhead of hash distribution. "})
+    public int shuffleKeyPruneThreshold = 1;
 
     // If this fe is in fuzzy mode, then will use initFuzzyModeVariables to generate some variables,
     // not the default value set in the code.

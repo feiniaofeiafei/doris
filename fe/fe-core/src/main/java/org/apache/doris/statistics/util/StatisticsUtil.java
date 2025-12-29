@@ -1324,22 +1324,50 @@ public class StatisticsUtil {
         return null;
     }
 
+    /**
+     * Get max hot value count including null for balance/skew computation.
+     * When hotValues not exist or empty, treat nulls as the only hot value.
+     * Otherwise use the max of (top hot value count, null count).
+     */
+    public static double getMaxHotValueCntIncludeNull(ColumnStatistic columnStatistic, double rowCount) {
+        Map<Literal, Float> hotValues = columnStatistic.getHotValues();
+        if (columnStatistic.getHotValues() == null || hotValues.isEmpty()) {
+            return columnStatistic.numNulls;
+        }
+        double maxRate = hotValues.values().stream().mapToDouble(Float::doubleValue).max().orElse(0);
+        double maxHotRows = maxRate * rowCount;
+        return maxHotRows > columnStatistic.numNulls ? maxHotRows : columnStatistic.numNulls;
+    }
+
     public static boolean isBalanced(ColumnStatistic columnStatistic, double rowCount, int instanceNum) {
         double ndv = columnStatistic.ndv;
-        double maxHotValueCntIncludeNull;
-        Map<Literal, Float> hotValues = columnStatistic.getHotValues();
-        // When hotValues not exist, or exist but unknown, treat nulls as the only hot value.
-        if (columnStatistic.getHotValues() == null || hotValues.isEmpty()) {
-            maxHotValueCntIncludeNull = columnStatistic.numNulls;
-        } else {
-            double rate = hotValues.values().stream().mapToDouble(Float::doubleValue).max().orElse(0);
-            maxHotValueCntIncludeNull = rate * rowCount > columnStatistic.numNulls
-                    ? rate * rowCount : columnStatistic.numNulls;
-        }
+        double maxHotValueCntIncludeNull = getMaxHotValueCntIncludeNull(columnStatistic, rowCount);
         double rowsPerInstance = (rowCount - maxHotValueCntIncludeNull) / instanceNum;
         double balanceFactor = maxHotValueCntIncludeNull == 0
                 ? Double.MAX_VALUE : rowsPerInstance / maxHotValueCntIncludeNull;
         // The larger this factor is, the more balanced the data.
         return balanceFactor > 2.0 && ndv > instanceNum * AggregateUtils.NDV_INSTANCE_BALANCE_MULTIPLIER;
+    }
+
+    /**
+     * Compute normalized hot value skew score for shuffle key selection.
+     * Design: factor = non_hot_value_rows_per_instance / max_hot_rows.
+     * - factor < 2: too skewed, return NEGATIVE_INFINITY (reject this column).
+     * - factor >= 2 && factor < 10: return factor/10 in [0.2, 1).
+     * - factor >= 10: return 1.0 (well balanced).
+     */
+    public static double computeShuffleKeySkewScore(ColumnStatistic columnStatistic,
+            double rowCount, int instanceNum) {
+        double maxHotValueCntIncludeNull = getMaxHotValueCntIncludeNull(columnStatistic, rowCount);
+        double rowsPerInstance = (rowCount - maxHotValueCntIncludeNull) / instanceNum;
+        double balanceFactor = maxHotValueCntIncludeNull == 0
+                ? Double.MAX_VALUE : rowsPerInstance / maxHotValueCntIncludeNull;
+        if (balanceFactor < 2.0) {
+            return Double.NEGATIVE_INFINITY;
+        }
+        if (balanceFactor >= 10.0) {
+            return 1.0;
+        }
+        return balanceFactor / 10.0;
     }
 }
