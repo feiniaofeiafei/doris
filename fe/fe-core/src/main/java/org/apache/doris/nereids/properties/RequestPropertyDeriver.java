@@ -510,7 +510,8 @@ public class RequestPropertyDeriver extends PlanVisitor<Void, PlanContext> {
                         double nullsCount = columnStatistic.numNulls;
                         double rowsPerInstance = (childRows - nullsCount) / instanceNum;
                         double maxSkewFactor = nullsCount == 0 ? Double.MAX_VALUE : rowsPerInstance / nullsCount;
-                        if (maxSkewFactor > 2.0 && ndv > instanceNum) {
+                        if (maxSkewFactor > connectContext.getSessionVariable().aggShuffleKeySkewFactor
+                                && ndv > instanceNum) {
                             bestNdv = ndv;
                             bestGbyKey = slotRef.getExprId();
                         }
