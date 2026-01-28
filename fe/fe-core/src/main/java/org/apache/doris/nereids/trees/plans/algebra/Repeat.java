@@ -302,4 +302,11 @@ public interface Repeat<CHILD_PLAN extends Plan> extends Aggregate<CHILD_PLAN> {
             return "GroupingSetShape(shouldBeErasedToNull=" + shouldBeErasedToNull + ")";
         }
     }
+
+    /** RepeatType */
+    enum RepeatType {
+        ROLLUP,
+        CUBE,
+        GROUPING_SETS
+    }
 }
