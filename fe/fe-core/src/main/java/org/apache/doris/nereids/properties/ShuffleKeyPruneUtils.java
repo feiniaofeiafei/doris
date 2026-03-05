@@ -82,9 +82,6 @@ public class ShuffleKeyPruneUtils {
         if (!connectContext.getSessionVariable().enableAggShuffleKeyPrune) {
             return false;
         }
-        if (partitionExprs.size() <= connectContext.getSessionVariable().shuffleKeyPruneThreshold) {
-            return false;
-        }
         if (agg.hasSourceRepeat()) {
             return false;
         }
@@ -99,8 +96,7 @@ public class ShuffleKeyPruneUtils {
     public static List<ExprId> selectOptimalShuffleKeyForAggWithParentHashRequest(
             PhysicalHashAggregate<? extends Plan> agg, Set<ExprId> intersectIdSet, PlanContext context) {
         List<ExprId> orderedIds = Utils.fastToImmutableList(intersectIdSet);
-        if (!context.getConnectContext().getSessionVariable().enableAggShuffleKeyPrune
-                || intersectIdSet.size() <= context.getConnectContext().getSessionVariable().shuffleKeyPruneThreshold) {
+        if (!context.getConnectContext().getSessionVariable().enableAggShuffleKeyPrune) {
             return orderedIds;
         }
         Optional<Statistics> childStats = getGlobalAggChildStats(agg);
@@ -257,10 +253,6 @@ public class ShuffleKeyPruneUtils {
      */
     public static Optional<Pair<List<ExprId>, List<ExprId>>> tryFindOptimalShuffleKeyForBothAggChildren(
             PhysicalHashJoin<? extends Plan, ? extends Plan> hashJoin, PlanContext context) {
-        if (hashJoin.getHashJoinConjuncts().size()
-                <= context.getConnectContext().getSessionVariable().shuffleKeyPruneThreshold) {
-            return Optional.empty();
-        }
         GroupExpression joinGroupExpr = context.getGroupExpression();
         if (joinGroupExpr == null) {
             return Optional.empty();

@@ -3515,15 +3515,6 @@ public class SessionVariable implements Serializable, Writable {
                             + "to exclude the impact of dangling delete files."})
     public boolean ignoreIcebergDanglingDelete = false;
 
-    public static final String SHUFFLE_KEY_PRUNE_THRESHOLD = "shuffle_key_prune_threshold";
-    @VariableMgr.VarAttr(name = SHUFFLE_KEY_PRUNE_THRESHOLD,
-            description = {"控制在聚合或连接操作中进行 shuffle key 裁剪的阈值。"
-                    + "当 shuffle key 的数量大于该阈值时，启用裁剪以减少哈希分发的开销。",
-                    "Controls the threshold for shuffle key pruning during aggregation or join operations. "
-                    + "Pruning is enabled when the number of shuffle keys exceeds this threshold to reduce "
-                    + "the overhead of hash distribution. "})
-    public int shuffleKeyPruneThreshold = 1;
-
     // If this fe is in fuzzy mode, then will use initFuzzyModeVariables to generate some variables,
     // not the default value set in the code.
     @SuppressWarnings("checkstyle:Indentation")

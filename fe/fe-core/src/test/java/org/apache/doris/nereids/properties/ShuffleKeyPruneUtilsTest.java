@@ -37,7 +37,9 @@ import org.apache.doris.nereids.trees.plans.JoinType;
 import org.apache.doris.nereids.trees.plans.physical.PhysicalEmptyRelation;
 import org.apache.doris.nereids.trees.plans.physical.PhysicalHashAggregate;
 import org.apache.doris.nereids.trees.plans.physical.PhysicalHashJoin;
+import org.apache.doris.nereids.types.DateType;
 import org.apache.doris.nereids.types.IntegerType;
+import org.apache.doris.nereids.types.VarcharType;
 import org.apache.doris.nereids.util.ExpressionUtils;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.utframe.TestWithFeService;
@@ -51,7 +53,9 @@ import mockit.MockUp;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -62,7 +66,6 @@ class ShuffleKeyPruneUtilsTest extends TestWithFeService {
 
     private static final double ROW_COUNT = 204000;
     private static final int INSTANCE_NUM = 8;
-    private static final int SHUFFLE_KEY_PRUNE_THRESHOLD = 5;
 
     private SlotReference slotA;
     private SlotReference slotB;
@@ -82,8 +85,6 @@ class ShuffleKeyPruneUtilsTest extends TestWithFeService {
 
     @Override
     protected void runBeforeAll() {
-        connectContext.getSessionVariable().shuffleKeyPruneThreshold = SHUFFLE_KEY_PRUNE_THRESHOLD;
-
         slotA = new SlotReference(new ExprId(0), "a", IntegerType.INSTANCE, true, ImmutableList.of());
         slotB = new SlotReference(new ExprId(1), "b", IntegerType.INSTANCE, true, ImmutableList.of());
         slotC = new SlotReference(new ExprId(2), "c", IntegerType.INSTANCE, true, ImmutableList.of());
@@ -120,6 +121,13 @@ class ShuffleKeyPruneUtilsTest extends TestWithFeService {
         }
         Group group = new Group(GroupId.createGenerator().getNextId(), emptyExpression, null);
         group.setStatistics(statsWithNdv(builder.build(), ROW_COUNT));
+        return group;
+    }
+
+    /** Creates a child Group with emptyRelation and custom ndv statistics for given expressions. */
+    private Group createChildGroupWithCustomStats(Map<Expression, Double> exprToNdv) {
+        Group group = new Group(GroupId.createGenerator().getNextId(), emptyExpression, null);
+        group.setStatistics(statsWithNdv(exprToNdv, ROW_COUNT));
         return group;
     }
 
@@ -303,7 +311,6 @@ class ShuffleKeyPruneUtilsTest extends TestWithFeService {
 
     @Test
     void testSelectBestShuffleKeyForAgg_partitionExprsBelowThreshold() {
-        connectContext.getSessionVariable().shuffleKeyPruneThreshold = 5;
         Group childGroup = createChildGroupWithStats(slotA, slotB, slotC, slotD, slotE, slotF);
         Pair<PhysicalHashAggregate<GroupPlan>, GroupExpression> aggSetup = createAggAndRegister(childGroup,
                 ImmutableList.of(slotA, slotB, slotC, slotD, slotE, slotF), false);
@@ -355,6 +362,32 @@ class ShuffleKeyPruneUtilsTest extends TestWithFeService {
         Assertions.assertTrue(result.isPresent());
         Assertions.assertFalse(result.get().first.isEmpty());
         Assertions.assertFalse(result.get().second.isEmpty());
+    }
+
+    @Test
+    void testSelectBestShuffleKeyForAgg_pruneStringKeysWithCombinedNdv() {
+        SlotReference numericSlot = new SlotReference(new ExprId(14), "num_col", IntegerType.INSTANCE, true,
+                ImmutableList.of());
+        SlotReference dateSlot = new SlotReference(new ExprId(15), "date_col", DateType.INSTANCE, true,
+                ImmutableList.of());
+        SlotReference stringSlot = new SlotReference(new ExprId(16), "str_col", new VarcharType(64), true,
+                ImmutableList.of());
+
+        Map<Expression, Double> exprToNdv = new HashMap<>();
+        exprToNdv.put(numericSlot, 3000.0);
+        exprToNdv.put(dateSlot, 3000.0);
+        exprToNdv.put(stringSlot, 3000.0);
+        Group childGroup = createChildGroupWithCustomStats(exprToNdv);
+        Pair<PhysicalHashAggregate<GroupPlan>, GroupExpression> aggSetup = createAggAndRegister(childGroup,
+                ImmutableList.of(numericSlot, dateSlot, stringSlot), false);
+
+        Optional<List<Expression>> result = ShuffleKeyPruneUtils.selectBestShuffleKeyForAgg(aggSetup.first,
+                ImmutableList.of(numericSlot, dateSlot, stringSlot), connectContext);
+
+        Assertions.assertTrue(result.isPresent());
+        Assertions.assertEquals(2, result.get().size());
+        Assertions.assertEquals(numericSlot, result.get().get(0));
+        Assertions.assertEquals(dateSlot, result.get().get(1));
     }
 
     @Test

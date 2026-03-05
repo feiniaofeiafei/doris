@@ -6,7 +6,7 @@ PhysicalResultSink
 ------PhysicalDistribute[DistributionSpecGather]
 --------PhysicalQuickSort[LOCAL_SORT]
 ----------hashAgg[GLOBAL]
-------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
+------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 --------------hashAgg[LOCAL]
 ----------------PhysicalProject
 ------------------PhysicalOlapScan[t1]
@@ -29,7 +29,7 @@ PhysicalResultSink
 ------------PhysicalQuickSort[LOCAL_SORT]
 --------------PhysicalProject
 ----------------hashAgg[GLOBAL]
-------------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
+------------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 --------------------hashAgg[LOCAL]
 ----------------------PhysicalProject
 ------------------------PhysicalOlapScan[t1]
@@ -49,7 +49,7 @@ PhysicalResultSink
 ------PhysicalQuickSort[LOCAL_SORT]
 --------hashAgg[GLOBAL]
 ----------hashAgg[GLOBAL]
-------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
+------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 --------------hashAgg[LOCAL]
 ----------------PhysicalOlapScan[t1]
 
@@ -69,7 +69,7 @@ PhysicalResultSink
 ------PhysicalQuickSort[LOCAL_SORT]
 --------hashAgg[GLOBAL]
 ----------hashAgg[GLOBAL]
-------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
+------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 --------------hashAgg[LOCAL]
 ----------------PhysicalOlapScan[t1]
 
@@ -90,7 +90,7 @@ PhysicalResultSink
 --------hashAgg[DISTINCT_GLOBAL]
 ----------hashAgg[DISTINCT_LOCAL]
 ------------hashAgg[GLOBAL]
---------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
+--------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 ----------------hashAgg[LOCAL]
 ------------------PhysicalOlapScan[t1]
 
@@ -111,7 +111,7 @@ PhysicalResultSink
 --------hashAgg[DISTINCT_GLOBAL]
 ----------hashAgg[DISTINCT_LOCAL]
 ------------hashAgg[GLOBAL]
---------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
+--------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 ----------------hashAgg[LOCAL]
 ------------------PhysicalOlapScan[t1]
 
@@ -130,13 +130,12 @@ PhysicalResultSink
 ----PhysicalDistribute[DistributionSpecGather]
 ------PhysicalQuickSort[LOCAL_SORT]
 --------hashAgg[DISTINCT_GLOBAL]
-----------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
-------------hashAgg[DISTINCT_LOCAL]
---------------hashAgg[GLOBAL]
-----------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
-------------------hashAgg[LOCAL]
---------------------PhysicalProject
-----------------------PhysicalOlapScan[t1]
+----------hashAgg[DISTINCT_LOCAL]
+------------hashAgg[GLOBAL]
+--------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
+----------------hashAgg[LOCAL]
+------------------PhysicalProject
+--------------------PhysicalOlapScan[t1]
 
 -- !distinct_agg_func_with_random_distribute_without_redundant_agg_result --
 1	1	1	1	1	1	1
@@ -153,7 +152,7 @@ PhysicalResultSink
 --------hashAgg[DISTINCT_GLOBAL]
 ----------hashAgg[DISTINCT_LOCAL]
 ------------hashAgg[GLOBAL]
---------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
+--------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 ----------------hashAgg[LOCAL]
 ------------------PhysicalProject
 --------------------PhysicalOlapScan[t1]
@@ -209,7 +208,7 @@ PhysicalResultSink
 ----PhysicalDistribute[DistributionSpecGather]
 ------PhysicalQuickSort[LOCAL_SORT]
 --------hashAgg[GLOBAL]
-----------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
+----------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 ------------hashAgg[LOCAL]
 --------------hashAgg[GLOBAL]
 ----------------PhysicalOlapScan[t2]
@@ -269,7 +268,7 @@ PhysicalResultSink
 --------PhysicalProject
 ----------hashAgg[DISTINCT_GLOBAL]
 ------------hashAgg[GLOBAL]
---------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
+--------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 ----------------hashAgg[LOCAL]
 ------------------PhysicalOlapScan[t1]
 
@@ -290,7 +289,7 @@ PhysicalResultSink
 --------PhysicalProject
 ----------hashAgg[DISTINCT_GLOBAL]
 ------------hashAgg[GLOBAL]
---------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
+--------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 ----------------hashAgg[LOCAL]
 ------------------PhysicalOlapScan[t1]
 
@@ -312,7 +311,7 @@ PhysicalResultSink
 ----------hashAgg[DISTINCT_GLOBAL]
 ------------hashAgg[DISTINCT_LOCAL]
 --------------hashAgg[GLOBAL]
-----------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
+----------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 ------------------hashAgg[LOCAL]
 --------------------PhysicalOlapScan[t1]
 
@@ -334,7 +333,7 @@ PhysicalResultSink
 ----------hashAgg[DISTINCT_GLOBAL]
 ------------hashAgg[DISTINCT_LOCAL]
 --------------hashAgg[GLOBAL]
-----------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
+----------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 ------------------hashAgg[LOCAL]
 --------------------PhysicalOlapScan[t1]
 
@@ -354,13 +353,12 @@ PhysicalResultSink
 ------PhysicalQuickSort[LOCAL_SORT]
 --------PhysicalProject
 ----------hashAgg[DISTINCT_GLOBAL]
-------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
---------------hashAgg[DISTINCT_LOCAL]
-----------------hashAgg[GLOBAL]
-------------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
---------------------hashAgg[LOCAL]
-----------------------PhysicalProject
-------------------------PhysicalOlapScan[t1]
+------------hashAgg[DISTINCT_LOCAL]
+--------------hashAgg[GLOBAL]
+----------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
+------------------hashAgg[LOCAL]
+--------------------PhysicalProject
+----------------------PhysicalOlapScan[t1]
 
 -- !distinct_agg_func_with_random_distribute_without_redundant_agg_avg_result --
 1	1	1	1	1	1	1	1
@@ -378,7 +376,7 @@ PhysicalResultSink
 ----------hashAgg[DISTINCT_GLOBAL]
 ------------hashAgg[DISTINCT_LOCAL]
 --------------hashAgg[GLOBAL]
-----------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
+----------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 ------------------hashAgg[LOCAL]
 --------------------PhysicalProject
 ----------------------PhysicalOlapScan[t1]
@@ -437,7 +435,7 @@ PhysicalResultSink
 ------PhysicalQuickSort[LOCAL_SORT]
 --------PhysicalProject
 ----------hashAgg[DISTINCT_GLOBAL]
-------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
+------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 --------------hashAgg[DISTINCT_LOCAL]
 ----------------hashAgg[GLOBAL]
 ------------------PhysicalOlapScan[t2]
@@ -499,12 +497,12 @@ PhysicalResultSink
 --------PhysicalProject
 ----------hashJoin[INNER_JOIN colocated] hashCondition=((t1.a = t2.a) and (t1.b = t2.b) and (t1.c = t2.c) and (t1.d = t2.d) and (t1.e = t2.e) and (t1.f = t2.f) and (t1.g = t2.g)) otherCondition=()
 ------------hashAgg[GLOBAL]
---------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
+--------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 ----------------hashAgg[LOCAL]
 ------------------PhysicalProject
 --------------------PhysicalOlapScan[t1]
 ------------hashAgg[GLOBAL]
---------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
+--------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 ----------------hashAgg[LOCAL]
 ------------------PhysicalProject
 --------------------PhysicalOlapScan[t1]
@@ -525,12 +523,12 @@ PhysicalResultSink
 --------PhysicalProject
 ----------hashJoin[INNER_JOIN colocated] hashCondition=((t1.a = t2.a) and (t1.b = t2.b) and (t1.c = t2.c) and (t1.d = t2.d) and (t1.e = t2.e)) otherCondition=()
 ------------hashAgg[GLOBAL]
---------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[a, b, c, d, e]
+--------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 ----------------hashAgg[LOCAL]
 ------------------PhysicalProject
 --------------------PhysicalOlapScan[t1]
 ------------hashAgg[GLOBAL]
---------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[a, b, c, d, e]
+--------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 ----------------hashAgg[LOCAL]
 ------------------PhysicalProject
 --------------------PhysicalOlapScan[t1]
@@ -552,13 +550,13 @@ PhysicalResultSink
 ----------hashJoin[INNER_JOIN colocated] hashCondition=((t1.a = t2.a) and (t1.b = t2.b) and (t1.c = t2.c) and (t1.d = t2.d) and (t1.e = t2.e)) otherCondition=()
 ------------PhysicalProject
 --------------hashAgg[GLOBAL]
-----------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
+----------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 ------------------hashAgg[LOCAL]
 --------------------PhysicalProject
 ----------------------PhysicalOlapScan[t1]
 ------------PhysicalProject
 --------------hashAgg[GLOBAL]
-----------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
+----------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 ------------------hashAgg[LOCAL]
 --------------------PhysicalProject
 ----------------------PhysicalOlapScan[t1]
@@ -637,7 +635,7 @@ PhysicalResultSink
 --------PhysicalProject
 ----------hashJoin[INNER_JOIN bucketShuffle] hashCondition=((t1.a = t2.a) and (t1.b = t2.b) and (t1.c = t2.c) and (t1.d = t2.d) and (t1.e = t2.e) and (t1.f = t2.f) and (t1.g = t2.g)) otherCondition=()
 ------------hashAgg[GLOBAL]
---------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
+--------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 ----------------hashAgg[LOCAL]
 ------------------PhysicalProject
 --------------------PhysicalOlapScan[t1]
@@ -731,7 +729,7 @@ PhysicalResultSink
 --------PhysicalProject
 ----------hashJoin[INNER_JOIN bucketShuffle] hashCondition=((t1.a = t2.a) and (t1.b = t2.b) and (t1.c = t2.c) and (t1.d = t2.d) and (t1.e = t2.e) and (t1.f = t2.f) and (t1.g = t2.g)) otherCondition=()
 ------------hashAgg[GLOBAL]
---------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
+--------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 ----------------hashAgg[LOCAL]
 ------------------PhysicalProject
 --------------------PhysicalOlapScan[t1]
@@ -781,13 +779,13 @@ PhysicalResultSink
 --------hashJoin[INNER_JOIN colocated] hashCondition=((t1.a = t2.a) and (t1.b = t2.b) and (t1.c = t2.c) and (t1.col1 = t2.col1) and (t1.col2 = t2.col2) and (t1.e = t2.e)) otherCondition=()
 ----------PhysicalProject
 ------------hashAgg[GLOBAL]
---------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[a, b, c, e]
+--------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
 ----------------hashAgg[LOCAL]
 ------------------PhysicalProject
 --------------------PhysicalOlapScan[t1]
 ----------PhysicalProject
 ------------hashAgg[GLOBAL]
---------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[a, b, c, e]
+--------------PhysicalDistribute[DistributionSpecHash] Hash Columns:[e]
 ----------------hashAgg[LOCAL]
 ------------------PhysicalProject
 --------------------PhysicalOlapScan[t1]
@@ -804,7 +802,7 @@ PhysicalResultSink
 ----PhysicalDistribute[DistributionSpecGather]
 ------PhysicalQuickSort[LOCAL_SORT]
 --------hashAgg[GLOBAL]
-----------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d, e, f]
+----------PhysicalDistribute[DistributionSpecHash] Hash Columns:[d]
 ------------hashAgg[LOCAL]
 --------------hashAgg[GLOBAL]
 ----------------PhysicalProject

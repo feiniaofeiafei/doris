@@ -58,7 +58,6 @@ suite("hash_shuffle_key_prune") {
 
         set disable_nereids_rules='prune_empty_partition';
         set enable_agg_shuffle_key_prune=true;
-        set shuffle_key_prune_threshold=5;
         set detail_shape_nodes='PhysicalDistribute';
         set runtime_filter_mode=OFF;
         set global enable_auto_analyze=false;
