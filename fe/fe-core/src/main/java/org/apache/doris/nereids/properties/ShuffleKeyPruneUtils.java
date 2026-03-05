@@ -155,7 +155,7 @@ public class ShuffleKeyPruneUtils {
 
     /**
      * Select optimal shuffle keys with three-step strategy:
-     * 1. Try single key: sort by type (numeric/date first, string last by length), pick first isBalanced key.
+     * 1. Try single key: sort by type (numeric/date first, string sorted by avg_size), pick first isBalanced key.
      * 2. Try remove strings: filter numeric+date keys, if combinedNDV > instanceNum*512 return that list.
      * 3. Fall back: return empty (caller uses full partitionExprs).
      */
@@ -168,14 +168,17 @@ public class ShuffleKeyPruneUtils {
         if (slotRefs.isEmpty()) {
             return Optional.empty();
         }
+        // If any partition slot lacks column stats, skip optimization and use original partitionExprs.
+        for (SlotReference slotRef : slotRefs) {
+            if (childStats.findColumnStatistics(slotRef) == null) {
+                return Optional.empty();
+            }
+        }
 
         // Step 1: Try single key - sort by type priority, pick first isBalanced
-        List<SlotReference> sortedByType = sortShuffleKeysByTypePriority(slotRefs);
+        List<SlotReference> sortedByType = sortShuffleKeysByTypePriority(slotRefs, childStats);
         for (SlotReference slotRef : sortedByType) {
             ColumnStatistic colStats = childStats.findColumnStatistics(slotRef);
-            if (colStats == null) {
-                continue;
-            }
             if (StatisticsUtil.isBalanced(colStats, rowCount, instanceNum)) {
                 return Optional.of(ImmutableList.of(slotRef));
             }
@@ -198,13 +201,15 @@ public class ShuffleKeyPruneUtils {
     }
 
     /**
-     * Sort shuffle keys: numeric and date first, then string types (strings sorted by length ascending).
+     * Sort shuffle keys: numeric and date first, then string types.
+     * String types are sorted by column statistics avg size (avgSizeByte) ascending.
      */
-    private static List<SlotReference> sortShuffleKeysByTypePriority(List<SlotReference> slotRefs) {
+    private static List<SlotReference> sortShuffleKeysByTypePriority(List<SlotReference> slotRefs,
+            Statistics childStats) {
         List<SlotReference> result = new ArrayList<>(slotRefs);
         result.sort(Comparator
                 .comparingInt((SlotReference s) -> getTypeSortPriority(s.getDataType()))
-                .thenComparingInt((SlotReference s) -> getStringLengthForSort(s.getDataType())));
+                .thenComparingDouble((SlotReference s) -> getStringAvgSizeForSort(s, childStats)));
         return result;
     }
 
@@ -216,9 +221,14 @@ public class ShuffleKeyPruneUtils {
         return 1;
     }
 
-    /** For string types return length; for others return 0 (no secondary sort). */
-    private static int getStringLengthForSort(DataType dataType) {
+    /** For string types return avg size from stats; for others return 0 (no secondary sort). */
+    private static double getStringAvgSizeForSort(SlotReference slotRef, Statistics childStats) {
+        DataType dataType = slotRef.getDataType();
         if (dataType instanceof CharacterType) {
+            ColumnStatistic colStats = childStats.findColumnStatistics(slotRef);
+            if (colStats != null && !colStats.isUnKnown && colStats.avgSizeByte > 0) {
+                return colStats.avgSizeByte;
+            }
             return ((CharacterType) dataType).getLen();
         }
         return 0;
@@ -318,17 +328,22 @@ public class ShuffleKeyPruneUtils {
         if (validPairs.isEmpty()) {
             return Optional.empty();
         }
+        // If any join key pair lacks column stats on either side, skip optimization.
+        for (Pair<SlotReference, SlotReference> pair : validPairs) {
+            if (leftStats.findColumnStatistics(pair.first) == null
+                    || rightStats.findColumnStatistics(pair.second) == null) {
+                return Optional.empty();
+            }
+        }
 
         // Step 1: Try single key - sort by type, pick first where both isBalanced
-        List<Pair<SlotReference, SlotReference>> sortedPairs = sortJoinKeyPairsByTypePriority(validPairs);
+        List<Pair<SlotReference, SlotReference>> sortedPairs =
+                sortJoinKeyPairsByTypePriority(validPairs, leftStats, rightStats);
         for (Pair<SlotReference, SlotReference> pair : sortedPairs) {
             SlotReference leftSlotRef = pair.first;
             SlotReference rightSlotRef = pair.second;
             ColumnStatistic leftColStats = leftStats.findColumnStatistics(leftSlotRef);
             ColumnStatistic rightColStats = rightStats.findColumnStatistics(rightSlotRef);
-            if (leftColStats == null || rightColStats == null) {
-                continue;
-            }
             if (StatisticsUtil.isBalanced(leftColStats, leftRows, instanceNum)
                     && StatisticsUtil.isBalanced(rightColStats, rightRows, instanceNum)) {
                 return Optional.of(Pair.of(
@@ -368,15 +383,24 @@ public class ShuffleKeyPruneUtils {
         return Optional.empty();
     }
 
-    /** Sort join key pairs by type priority (numeric/date first, string last by length). */
+    /** Sort join key pairs by type priority (numeric/date first, string by avg_size). */
     private static List<Pair<SlotReference, SlotReference>> sortJoinKeyPairsByTypePriority(
-            List<Pair<SlotReference, SlotReference>> pairs) {
+            List<Pair<SlotReference, SlotReference>> pairs, Statistics leftStats, Statistics rightStats) {
         List<Pair<SlotReference, SlotReference>> result = new ArrayList<>(pairs);
         result.sort(Comparator
                 .comparingInt((Pair<SlotReference, SlotReference> p) ->
                         getTypeSortPriority(p.first.getDataType()))
-                .thenComparingInt((Pair<SlotReference, SlotReference> p) ->
-                        getStringLengthForSort(p.first.getDataType())));
+                .thenComparingDouble((Pair<SlotReference, SlotReference> p) ->
+                        getJoinPairStringAvgSizeForSort(p, leftStats, rightStats)));
         return result;
+    }
+
+    /** For string join-key pairs, use avg size of both sides for sorting; for others return 0. */
+    private static double getJoinPairStringAvgSizeForSort(Pair<SlotReference, SlotReference> pair,
+            Statistics leftStats, Statistics rightStats) {
+        if (pair.first.getDataType() instanceof CharacterType && pair.second.getDataType() instanceof CharacterType) {
+            return (getStringAvgSizeForSort(pair.first, leftStats) + getStringAvgSizeForSort(pair.second, rightStats));
+        }
+        return 0;
     }
 }
