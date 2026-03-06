@@ -1348,26 +1348,4 @@ public class StatisticsUtil {
         // The larger this factor is, the more balanced the data.
         return balanceFactor > 2.0 && ndv > instanceNum * AggregateUtils.NDV_INSTANCE_BALANCE_MULTIPLIER;
     }
-
-    /**
-     * Compute normalized hot value skew score for shuffle key selection.
-     * Design: factor = non_hot_value_rows_per_instance / max_hot_rows.
-     * - factor < 2: too skewed, return NEGATIVE_INFINITY (reject this column).
-     * - factor >= 2 && factor < 10: return factor/10 in [0.2, 1).
-     * - factor >= 10: return 1.0 (well balanced).
-     */
-    public static double computeShuffleKeySkewScore(ColumnStatistic columnStatistic,
-            double rowCount, int instanceNum) {
-        double maxHotValueCntIncludeNull = getMaxHotValueCntIncludeNull(columnStatistic, rowCount);
-        double rowsPerInstance = (rowCount - maxHotValueCntIncludeNull) / instanceNum;
-        double balanceFactor = maxHotValueCntIncludeNull == 0
-                ? Double.MAX_VALUE : rowsPerInstance / maxHotValueCntIncludeNull;
-        if (balanceFactor < 2.0) {
-            return Double.NEGATIVE_INFINITY;
-        }
-        if (balanceFactor >= 10.0) {
-            return 1.0;
-        }
-        return balanceFactor / 10.0;
-    }
 }

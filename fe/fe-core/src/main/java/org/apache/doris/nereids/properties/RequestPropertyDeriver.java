@@ -270,10 +270,8 @@ public class RequestPropertyDeriver extends PlanVisitor<Void, PlanContext> {
                         ShuffleKeyPruneUtils.tryFindOptimalShuffleKeyForBothAggChildren(hashJoin, context);
                 if (optimalKeys.isPresent()) {
                     addRequestPropertyToChildren(
-                            PhysicalProperties.createHash(
-                                    optimalKeys.get().first, ShuffleType.REQUIRE),
-                            PhysicalProperties.createHash(
-                                    optimalKeys.get().second, ShuffleType.REQUIRE));
+                            PhysicalProperties.createHash(optimalKeys.get().first, ShuffleType.REQUIRE),
+                            PhysicalProperties.createHash(optimalKeys.get().second, ShuffleType.REQUIRE));
                     return null;
                 }
             }
@@ -512,10 +510,17 @@ public class RequestPropertyDeriver extends PlanVisitor<Void, PlanContext> {
                 Set<ExprId> intersectIdSet = Sets.intersection(new HashSet<>(parentHashExprIds),
                         new HashSet<>(groupByExprIds));
                 if (!intersectIdSet.isEmpty() && intersectIdSet.size() < groupByExprIds.size()) {
-                    if (shouldUseParent(parentHashExprIds, agg, context)) {
+                    List<ExprId> intersectIdList = new ArrayList<>();
+                    for (ExprId exprId : parentHashExprIds) {
+                        if (!intersectIdSet.contains(exprId)) {
+                            continue;
+                        }
+                        intersectIdList.add(exprId);
+                    }
+                    if (shouldUseParent(intersectIdList, agg, context)) {
                         List<ExprId> shuffleKeys =
                                 ShuffleKeyPruneUtils.selectOptimalShuffleKeyForAggWithParentHashRequest(
-                                agg, intersectIdSet, context);
+                                agg, intersectIdList, context);
                         addRequestPropertyToChildren(PhysicalProperties.createHash(shuffleKeys, ShuffleType.REQUIRE));
                     }
                 }

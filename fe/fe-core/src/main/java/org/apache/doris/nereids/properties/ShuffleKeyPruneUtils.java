@@ -24,14 +24,15 @@ import org.apache.doris.nereids.memo.GroupExpression;
 import org.apache.doris.nereids.stats.StatsCalculator;
 import org.apache.doris.nereids.trees.expressions.ExprId;
 import org.apache.doris.nereids.trees.expressions.Expression;
+import org.apache.doris.nereids.trees.expressions.Slot;
 import org.apache.doris.nereids.trees.expressions.SlotReference;
 import org.apache.doris.nereids.trees.plans.Plan;
 import org.apache.doris.nereids.trees.plans.physical.PhysicalHashAggregate;
 import org.apache.doris.nereids.trees.plans.physical.PhysicalHashJoin;
+import org.apache.doris.nereids.trees.plans.physical.PhysicalWindow;
 import org.apache.doris.nereids.types.DataType;
 import org.apache.doris.nereids.types.coercion.CharacterType;
 import org.apache.doris.nereids.util.AggregateUtils;
-import org.apache.doris.nereids.util.Utils;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.statistics.ColumnStatistic;
 import org.apache.doris.statistics.Statistics;
@@ -41,7 +42,9 @@ import com.google.common.collect.ImmutableList;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -94,26 +97,27 @@ public class ShuffleKeyPruneUtils {
      * shuffle keys.
      */
     public static List<ExprId> selectOptimalShuffleKeyForAggWithParentHashRequest(
-            PhysicalHashAggregate<? extends Plan> agg, Set<ExprId> intersectIdSet, PlanContext context) {
-        List<ExprId> orderedIds = Utils.fastToImmutableList(intersectIdSet);
+            PhysicalHashAggregate<? extends Plan> agg, List<ExprId> intersectIdList, PlanContext context) {
         if (!context.getConnectContext().getSessionVariable().enableAggShuffleKeyPrune) {
-            return orderedIds;
+            return intersectIdList;
+        }
+        List<Expression> intersectExprs = new ArrayList<>();
+        Map<ExprId, Slot> exprIdToSlot = new HashMap<>();
+        for (Slot slot : agg.getOutput()) {
+            exprIdToSlot.put(slot.getExprId(), slot);
+        }
+        for (ExprId exprId : intersectIdList) {
+            if (!exprIdToSlot.containsKey(exprId)) {
+                return intersectIdList;
+            }
+            intersectExprs.add(exprIdToSlot.get(exprId));
+        }
+        if (intersectExprs.isEmpty()) {
+            return intersectIdList;
         }
         Optional<Statistics> childStats = getGlobalAggChildStats(agg);
         if (!childStats.isPresent()) {
-            return orderedIds;
-        }
-        List<Expression> intersectExprs = new ArrayList<>();
-        for (Expression e : agg.getGroupByExpressions()) {
-            if (e instanceof SlotReference) {
-                SlotReference slot = (SlotReference) e;
-                if (intersectIdSet.contains(slot.getExprId())) {
-                    intersectExprs.add(e);
-                }
-            }
-        }
-        if (intersectExprs.isEmpty()) {
-            return orderedIds;
+            return intersectIdList;
         }
         double rowCount = childStats.get().getRowCount();
         int instanceNum = ConnectContext.getTotalInstanceNum(context.getConnectContext());
@@ -126,7 +130,26 @@ public class ShuffleKeyPruneUtils {
                     .map(SlotReference::getExprId)
                     .collect(Collectors.toList());
         }
-        return orderedIds;
+        return intersectIdList;
+    }
+
+    /** select best shuffle key for window */
+    public static Optional<List<Expression>> selectBestShuffleKeyForWindow(PhysicalWindow<? extends Plan> window,
+            List<Expression> partitionExprs, ConnectContext context) {
+        if (!context.getSessionVariable().enableAggShuffleKeyPrune) {
+            return Optional.empty();
+        }
+        Optional<GroupExpression> groupExpression = window.getGroupExpression();
+        if (!groupExpression.isPresent()) {
+            return Optional.empty();
+        }
+        Statistics childStats = groupExpression.get().childStatistics(0);
+        if (childStats == null) {
+            return Optional.empty();
+        }
+        double rowCount = childStats.getRowCount();
+        int instanceNum = ConnectContext.getTotalInstanceNum(context);
+        return selectOptimalShuffleKeys(partitionExprs, childStats, rowCount, instanceNum);
     }
 
     /**

@@ -41,6 +41,7 @@ import org.apache.doris.nereids.types.DateType;
 import org.apache.doris.nereids.types.IntegerType;
 import org.apache.doris.nereids.types.VarcharType;
 import org.apache.doris.nereids.util.ExpressionUtils;
+import org.apache.doris.nereids.util.Utils;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.utframe.TestWithFeService;
 
@@ -225,7 +226,7 @@ class ShuffleKeyPruneUtilsTest extends TestWithFeService {
                 Lists.newArrayList(PhysicalProperties.ANY, PhysicalProperties.ANY));
 
         List<ExprId> result = ShuffleKeyPruneUtils.selectOptimalShuffleKeyForAggWithParentHashRequest(
-                aggSetup.first, intersectIdSet, planContext);
+                aggSetup.first, Utils.fastToImmutableList(intersectIdSet), planContext);
 
         Assertions.assertEquals(6, result.size());
         connectContext.getSessionVariable().enableAggShuffleKeyPrune = true;
@@ -242,7 +243,7 @@ class ShuffleKeyPruneUtilsTest extends TestWithFeService {
         PlanContext planContext = new PlanContext(connectContext, aggSetup.second,
                 Lists.newArrayList(PhysicalProperties.ANY, PhysicalProperties.ANY));
         List<ExprId> result = ShuffleKeyPruneUtils.selectOptimalShuffleKeyForAggWithParentHashRequest(
-                aggSetup.first, intersectIdSet, planContext);
+                aggSetup.first, Utils.fastToImmutableList(intersectIdSet), planContext);
 
         Assertions.assertEquals(3, result.size());
     }
@@ -260,7 +261,7 @@ class ShuffleKeyPruneUtilsTest extends TestWithFeService {
                 Lists.newArrayList(PhysicalProperties.ANY));
 
         List<ExprId> result = ShuffleKeyPruneUtils.selectOptimalShuffleKeyForAggWithParentHashRequest(
-                aggSetup.first, intersectIdSet, planContext);
+                aggSetup.first, Utils.fastToImmutableList(intersectIdSet), planContext);
 
         Assertions.assertEquals(6, result.size());
     }
@@ -277,7 +278,7 @@ class ShuffleKeyPruneUtilsTest extends TestWithFeService {
         PlanContext planContext = new PlanContext(connectContext, aggSetup.second,
                 Lists.newArrayList(PhysicalProperties.ANY));
         List<ExprId> result = ShuffleKeyPruneUtils.selectOptimalShuffleKeyForAggWithParentHashRequest(
-                aggSetup.first, intersectIdSet, planContext);
+                aggSetup.first, Utils.fastToImmutableList(intersectIdSet), planContext);
 
         Assertions.assertEquals(1, result.size());
     }
