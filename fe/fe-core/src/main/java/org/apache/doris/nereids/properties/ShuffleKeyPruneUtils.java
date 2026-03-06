@@ -398,6 +398,124 @@ public class ShuffleKeyPruneUtils {
         return Optional.empty();
     }
 
+    /**
+     * Pick optimal shuffle keys for a hash join from its hash join keys.
+     * Uses the same three-step strategy as agg shuffle-key pruning:
+     * 1) Try single key (isBalanced); 2) Try numeric+date keys (remove strings);
+     * 3) Fall back (empty).
+     *
+     * <p>Unlike {@link #tryFindOptimalShuffleKeyForBothAggChildren}, this method does NOT require
+     * join children to be Global AGG. It works for any join children as long as join key slots and
+     * their column statistics are available.
+     *
+     * @return (leftKeys, rightKeys) or empty.
+     */
+    public static Optional<Pair<List<ExprId>, List<ExprId>>> tryFindOptimalShuffleKeyForJoin(
+            PhysicalHashJoin<? extends Plan, ? extends Plan> hashJoin, PlanContext context) {
+        if (!context.getConnectContext().getSessionVariable().enableAggShuffleKeyPrune) {
+            return Optional.empty();
+        }
+        GroupExpression joinGroupExpr = context.getGroupExpression();
+        if (joinGroupExpr == null) {
+            return Optional.empty();
+        }
+        Statistics leftStats = joinGroupExpr.child(0).getStatistics();
+        Statistics rightStats = joinGroupExpr.child(1).getStatistics();
+        if (leftStats == null || rightStats == null) {
+            return Optional.empty();
+        }
+
+        Pair<List<ExprId>, List<ExprId>> joinKeys = hashJoin.getHashConjunctsExprIds();
+        if (joinKeys.first.isEmpty() || joinKeys.second.size() != joinKeys.first.size()) {
+            return Optional.empty();
+        }
+
+        double leftRows = leftStats.getRowCount();
+        double rightRows = rightStats.getRowCount();
+        int instanceNum = ConnectContext.getTotalInstanceNum(context.getConnectContext());
+
+        Map<ExprId, SlotReference> leftExprIdToSlotRef = new HashMap<>();
+        for (Slot slot : hashJoin.left().getOutput()) {
+            if (slot instanceof SlotReference) {
+                leftExprIdToSlotRef.put(slot.getExprId(), (SlotReference) slot);
+            }
+        }
+        Map<ExprId, SlotReference> rightExprIdToSlotRef = new HashMap<>();
+        for (Slot slot : hashJoin.right().getOutput()) {
+            if (slot instanceof SlotReference) {
+                rightExprIdToSlotRef.put(slot.getExprId(), (SlotReference) slot);
+            }
+        }
+
+        // Build (leftSlotRef, rightSlotRef) pairs for join keys.
+        List<Pair<SlotReference, SlotReference>> validPairs = new ArrayList<>();
+        for (int i = 0; i < joinKeys.first.size(); i++) {
+            ExprId leftId = joinKeys.first.get(i);
+            ExprId rightId = joinKeys.second.get(i);
+            SlotReference leftSlotRef = leftExprIdToSlotRef.get(leftId);
+            SlotReference rightSlotRef = rightExprIdToSlotRef.get(rightId);
+            if (leftSlotRef != null && rightSlotRef != null) {
+                validPairs.add(Pair.of(leftSlotRef, rightSlotRef));
+            }
+        }
+        if (validPairs.isEmpty()) {
+            return Optional.empty();
+        }
+        // If any join key pair lacks column stats on either side, skip optimization.
+        for (Pair<SlotReference, SlotReference> pair : validPairs) {
+            if (leftStats.findColumnStatistics(pair.first) == null
+                    || rightStats.findColumnStatistics(pair.second) == null) {
+                return Optional.empty();
+            }
+        }
+
+        // Step 1: Try single key - sort by type, pick first where both isBalanced
+        List<Pair<SlotReference, SlotReference>> sortedPairs =
+                sortJoinKeyPairsByTypePriority(validPairs, leftStats, rightStats);
+        for (Pair<SlotReference, SlotReference> pair : sortedPairs) {
+            SlotReference leftSlotRef = pair.first;
+            SlotReference rightSlotRef = pair.second;
+            ColumnStatistic leftColStats = leftStats.findColumnStatistics(leftSlotRef);
+            ColumnStatistic rightColStats = rightStats.findColumnStatistics(rightSlotRef);
+            if (StatisticsUtil.isBalanced(leftColStats, leftRows, instanceNum)
+                    && StatisticsUtil.isBalanced(rightColStats, rightRows, instanceNum)) {
+                return Optional.of(Pair.of(
+                        ImmutableList.of(leftSlotRef.getExprId()),
+                        ImmutableList.of(rightSlotRef.getExprId())));
+            }
+        }
+
+        // Step 2: Try remove string types - filter numeric+date pairs, check combined NDV
+        List<SlotReference> numericDateLeftSlots = new ArrayList<>();
+        List<SlotReference> numericDateRightSlots = new ArrayList<>();
+        for (Pair<SlotReference, SlotReference> pair : validPairs) {
+            if ((pair.first.getDataType().isNumericType() || pair.first.getDataType().isDateLikeType())
+                    && (pair.second.getDataType().isNumericType() || pair.second.getDataType().isDateLikeType())) {
+                numericDateLeftSlots.add(pair.first);
+                numericDateRightSlots.add(pair.second);
+            }
+        }
+        if (!numericDateLeftSlots.isEmpty()) {
+            double leftCombinedNdv = StatsCalculator.estimateGroupByRowCount(
+                    new ArrayList<>(numericDateLeftSlots), leftStats);
+            double rightCombinedNdv = StatsCalculator.estimateGroupByRowCount(
+                    new ArrayList<>(numericDateRightSlots), rightStats);
+            long ndvThreshold = (long) instanceNum * AggregateUtils.NDV_INSTANCE_BALANCE_MULTIPLIER;
+            if (leftCombinedNdv > ndvThreshold && rightCombinedNdv > ndvThreshold) {
+                List<ExprId> leftIds = numericDateLeftSlots.stream()
+                        .map(SlotReference::getExprId)
+                        .collect(Collectors.toList());
+                List<ExprId> rightIds = numericDateRightSlots.stream()
+                        .map(SlotReference::getExprId)
+                        .collect(Collectors.toList());
+                return Optional.of(Pair.of(leftIds, rightIds));
+            }
+        }
+
+        // Step 3: Fall back
+        return Optional.empty();
+    }
+
     /** Sort join key pairs by type priority (numeric/date first, string by avg_size). */
     private static List<Pair<SlotReference, SlotReference>> sortJoinKeyPairsByTypePriority(
             List<Pair<SlotReference, SlotReference>> pairs, Statistics leftStats, Statistics rightStats) {

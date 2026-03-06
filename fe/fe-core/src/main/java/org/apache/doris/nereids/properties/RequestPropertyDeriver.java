@@ -265,16 +265,11 @@ public class RequestPropertyDeriver extends PlanVisitor<Void, PlanContext> {
         // for shuffle join
         if (JoinUtils.couldShuffle(hashJoin)) {
             // Scenario 3.3: when both children are Global AGG, try unified single shuffle key from join key ∩ gby
-            if (connectContext.getSessionVariable().enableAggShuffleKeyPrune) {
-                Optional<Pair<List<ExprId>, List<ExprId>>> optimalKeys =
-                        ShuffleKeyPruneUtils.tryFindOptimalShuffleKeyForBothAggChildren(hashJoin, context);
-                if (optimalKeys.isPresent()) {
-                    addRequestPropertyToChildren(
-                            PhysicalProperties.createHash(optimalKeys.get().first, ShuffleType.REQUIRE),
-                            PhysicalProperties.createHash(optimalKeys.get().second, ShuffleType.REQUIRE));
-                    return null;
-                }
-            }
+            Optional<Pair<List<ExprId>, List<ExprId>>> optimalKeys =
+                    ShuffleKeyPruneUtils.tryFindOptimalShuffleKeyForJoin(hashJoin, context);
+            optimalKeys.ifPresent(pair -> addRequestPropertyToChildren(
+                    PhysicalProperties.createHash(pair.first, ShuffleType.REQUIRE),
+                    PhysicalProperties.createHash(pair.second, ShuffleType.REQUIRE)));
             addShuffleJoinRequestProperty(hashJoin, ShuffleType.REQUIRE);
         }
 
