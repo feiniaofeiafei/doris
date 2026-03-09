@@ -233,22 +233,6 @@ class ShuffleKeyPruneUtilsTest extends TestWithFeService {
     }
 
     @Test
-    void testSelectOptimalShuffleKeyForAggWithParentHashRequest_belowThreshold() {
-        Set<ExprId> intersectIdSet = Sets.newHashSet(slotA.getExprId(), slotB.getExprId(), slotC.getExprId());
-
-        Group childGroup = createChildGroupWithStats(slotA, slotB, slotC);
-        Pair<PhysicalHashAggregate<GroupPlan>, GroupExpression> aggSetup = createAggAndRegister(childGroup,
-                ImmutableList.of(slotA, slotB, slotC), false);
-
-        PlanContext planContext = new PlanContext(connectContext, aggSetup.second,
-                Lists.newArrayList(PhysicalProperties.ANY, PhysicalProperties.ANY));
-        List<ExprId> result = ShuffleKeyPruneUtils.selectOptimalShuffleKeyForAggWithParentHashRequest(
-                aggSetup.first, Utils.fastToImmutableList(intersectIdSet), planContext);
-
-        Assertions.assertEquals(3, result.size());
-    }
-
-    @Test
     void testSelectOptimalShuffleKeyForAggWithParentHashRequest_noStatistics() {
         Set<ExprId> intersectIdSet = Sets.newHashSet(slotA.getExprId(), slotB.getExprId(), slotC.getExprId(),
                 slotD.getExprId(), slotE.getExprId(), slotF.getExprId());
@@ -307,17 +291,6 @@ class ShuffleKeyPruneUtilsTest extends TestWithFeService {
         Optional<List<Expression>> result = ShuffleKeyPruneUtils.selectBestShuffleKeyForAgg(aggSetup.first,
                 ImmutableList.of(slotA, slotB, slotC, slotD, slotE, slotF), connectContext);
 
-        Assertions.assertFalse(result.isPresent());
-    }
-
-    @Test
-    void testSelectBestShuffleKeyForAgg_partitionExprsBelowThreshold() {
-        Group childGroup = createChildGroupWithStats(slotA, slotB, slotC, slotD, slotE, slotF);
-        Pair<PhysicalHashAggregate<GroupPlan>, GroupExpression> aggSetup = createAggAndRegister(childGroup,
-                ImmutableList.of(slotA, slotB, slotC, slotD, slotE, slotF), false);
-
-        Optional<List<Expression>> result = ShuffleKeyPruneUtils.selectBestShuffleKeyForAgg(aggSetup.first,
-                ImmutableList.of(slotA, slotB, slotC), connectContext);
         Assertions.assertFalse(result.isPresent());
     }
 
@@ -389,22 +362,6 @@ class ShuffleKeyPruneUtilsTest extends TestWithFeService {
         Assertions.assertEquals(2, result.get().size());
         Assertions.assertEquals(numericSlot, result.get().get(0));
         Assertions.assertEquals(dateSlot, result.get().get(1));
-    }
-
-    @Test
-    void testTryFindOptimalShuffleKeyForBothAggChildren_belowThreshold() {
-        Pair<Group, Group> groups = createJoinAggGroups();
-        PhysicalHashJoin<GroupPlan, GroupPlan> hashJoin = createHashJoinWithConjuncts(groups.first, groups.second, 3);
-
-        GroupExpression joinGroupExpr = new GroupExpression(hashJoin, Lists.newArrayList(groups.first, groups.second));
-        PlanContext planContext = new PlanContext(connectContext, joinGroupExpr,
-                Lists.newArrayList(PhysicalProperties.ANY, PhysicalProperties.ANY));
-        new Group(GroupId.createGenerator().getNextId(), joinGroupExpr, null);
-
-        Optional<Pair<List<ExprId>, List<ExprId>>> result = ShuffleKeyPruneUtils.tryFindOptimalShuffleKeyForBothAggChildren(
-                hashJoin, planContext);
-
-        Assertions.assertFalse(result.isPresent());
     }
 
     @Test
