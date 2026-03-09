@@ -120,7 +120,7 @@ public class ShuffleKeyPruneUtils {
             return intersectIdList;
         }
         double rowCount = childStats.get().getRowCount();
-        int instanceNum = ConnectContext.getTotalInstanceNum(context.getConnectContext());
+        int instanceNum = context.getConnectContext().getTotalInstanceNum();
         Optional<List<Expression>> optimalKeys = selectOptimalShuffleKeys(
                 intersectExprs, childStats.get(), rowCount, instanceNum);
         if (optimalKeys.isPresent()) {
@@ -148,7 +148,7 @@ public class ShuffleKeyPruneUtils {
             return Optional.empty();
         }
         double rowCount = childStats.getRowCount();
-        int instanceNum = ConnectContext.getTotalInstanceNum(context);
+        int instanceNum = context.getTotalInstanceNum();
         return selectOptimalShuffleKeys(partitionExprs, childStats, rowCount, instanceNum);
     }
 
@@ -168,7 +168,7 @@ public class ShuffleKeyPruneUtils {
             return Optional.empty();
         }
         double rowCount = childStats.get().getRowCount();
-        int instanceNum = ConnectContext.getTotalInstanceNum(context);
+        int instanceNum = context.getTotalInstanceNum();
         return selectOptimalShuffleKeys(partitionExprs, childStats.get(), rowCount, instanceNum);
     }
 
@@ -316,7 +316,7 @@ public class ShuffleKeyPruneUtils {
 
         double leftRows = leftStats.getRowCount();
         double rightRows = rightStats.getRowCount();
-        int instanceNum = ConnectContext.getTotalInstanceNum(context.getConnectContext());
+        int instanceNum = context.getConnectContext().getTotalInstanceNum();
 
         // Build (leftSlotRef, rightSlotRef) pairs for join keys in both gby sets
         List<Pair<SlotReference, SlotReference>> validPairs = new ArrayList<>();
@@ -432,7 +432,7 @@ public class ShuffleKeyPruneUtils {
 
         double leftRows = leftStats.getRowCount();
         double rightRows = rightStats.getRowCount();
-        int instanceNum = ConnectContext.getTotalInstanceNum(context.getConnectContext());
+        int instanceNum = context.getConnectContext().getTotalInstanceNum();
 
         Map<ExprId, SlotReference> leftExprIdToSlotRef = new HashMap<>();
         for (Slot slot : hashJoin.left().getOutput()) {

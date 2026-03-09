@@ -1601,16 +1601,16 @@ public class ConnectContext {
         }
     }
 
-    public static int getAliveBeNumber(ConnectContext connectContext) {
-        return Math.max(1, connectContext.getEnv().getClusterInfo().getBackendsNumber(true));
+    public int getAliveBeNumber() {
+        return Math.max(1, this.getEnv().getClusterInfo().getBackendsNumber(true));
     }
 
-    public static int getParallelInstanceNum(ConnectContext connectContext) {
-        String clusterName = connectContext.getSessionVariable().resolveCloudClusterName(connectContext);
-        return Math.max(1, connectContext.getSessionVariable().getParallelExecInstanceNum(clusterName));
+    public int getParallelInstanceNum() {
+        String clusterName = this.getSessionVariable().resolveCloudClusterName(this);
+        return Math.max(1, this.getSessionVariable().getParallelExecInstanceNum(clusterName));
     }
 
-    public static int getTotalInstanceNum(ConnectContext connectContext) {
-        return getAliveBeNumber(connectContext) * getParallelInstanceNum(connectContext);
+    public int getTotalInstanceNum() {
+        return getAliveBeNumber() * getParallelInstanceNum();
     }
 }
