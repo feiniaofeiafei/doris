@@ -1606,7 +1606,8 @@ public class ConnectContext {
     }
 
     public static int getParallelInstanceNum(ConnectContext connectContext) {
-        return Math.max(1, connectContext.getSessionVariable().getParallelExecInstanceNum());
+        String clusterName = connectContext.getSessionVariable().resolveCloudClusterName(connectContext);
+        return Math.max(1, connectContext.getSessionVariable().getParallelExecInstanceNum(clusterName));
     }
 
     public static int getTotalInstanceNum(ConnectContext connectContext) {
