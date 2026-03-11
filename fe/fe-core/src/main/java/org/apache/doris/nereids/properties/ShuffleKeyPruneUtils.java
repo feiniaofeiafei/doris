@@ -29,7 +29,6 @@ import org.apache.doris.nereids.trees.expressions.SlotReference;
 import org.apache.doris.nereids.trees.plans.Plan;
 import org.apache.doris.nereids.trees.plans.physical.PhysicalHashAggregate;
 import org.apache.doris.nereids.trees.plans.physical.PhysicalHashJoin;
-import org.apache.doris.nereids.trees.plans.physical.PhysicalWindow;
 import org.apache.doris.nereids.types.DataType;
 import org.apache.doris.nereids.types.coercion.CharacterType;
 import org.apache.doris.nereids.util.AggregateUtils;
@@ -131,25 +130,6 @@ public class ShuffleKeyPruneUtils {
                     .collect(Collectors.toList());
         }
         return intersectIdList;
-    }
-
-    /** select best shuffle key for window */
-    public static Optional<List<Expression>> selectBestShuffleKeyForWindow(PhysicalWindow<? extends Plan> window,
-            List<Expression> partitionExprs, ConnectContext context) {
-        if (!context.getSessionVariable().enableAggShuffleKeyPrune) {
-            return Optional.empty();
-        }
-        Optional<GroupExpression> groupExpression = window.getGroupExpression();
-        if (!groupExpression.isPresent()) {
-            return Optional.empty();
-        }
-        Statistics childStats = groupExpression.get().childStatistics(0);
-        if (childStats == null) {
-            return Optional.empty();
-        }
-        double rowCount = childStats.getRowCount();
-        int instanceNum = context.getTotalInstanceNum();
-        return selectOptimalShuffleKeys(partitionExprs, childStats, rowCount, instanceNum);
     }
 
     /**

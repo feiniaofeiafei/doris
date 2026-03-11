@@ -109,7 +109,7 @@ class ShuffleKeyPruneUtilsTest extends TestWithFeService {
     /** MockUp for static getTotalInstanceNum - use named class for Java 8 (anonymous class cannot have static members). */
     private static class ConnectContextMockUp extends MockUp<ConnectContext> {
         @Mock
-        public static int getTotalInstanceNum(ConnectContext ctx) {
+        public int getTotalInstanceNum() {
             return INSTANCE_NUM;
         }
     }
