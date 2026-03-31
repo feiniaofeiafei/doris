@@ -18,12 +18,15 @@
 package org.apache.doris.catalog;
 
 import org.apache.doris.analysis.Expr;
+import org.apache.doris.persist.gson.GsonPostProcessable;
 import org.apache.doris.thrift.TFunctionBinaryType;
 
+import com.google.common.collect.Maps;
 import com.google.gson.annotations.SerializedName;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -33,7 +36,7 @@ import java.util.Objects;
 /**
  * Internal representation of an alias function.
  */
-public class AliasFunction extends Function {
+public class AliasFunction extends Function implements GsonPostProcessable {
     private static final Logger LOG = LogManager.getLogger(AliasFunction.class);
 
     private static final String DIGITAL_MASKING = "digital_masking";
@@ -94,5 +97,12 @@ public class AliasFunction extends Function {
         }
         AliasFunction other = (AliasFunction) o;
         return Objects.equals(sessionVariables, other.sessionVariables);
+    }
+
+    @Override
+    public void gsonPostProcess() throws IOException {
+        if (sessionVariables == null) {
+            sessionVariables = Maps.newHashMap();
+        }
     }
 }
