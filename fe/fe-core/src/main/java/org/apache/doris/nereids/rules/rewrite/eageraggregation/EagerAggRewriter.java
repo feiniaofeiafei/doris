@@ -45,6 +45,7 @@ import org.apache.doris.nereids.trees.plans.algebra.SetOperation.Qualifier;
 import org.apache.doris.nereids.trees.plans.logical.LogicalAggregate;
 import org.apache.doris.nereids.trees.plans.logical.LogicalCatalogRelation;
 import org.apache.doris.nereids.trees.plans.logical.LogicalFilter;
+import org.apache.doris.nereids.trees.plans.logical.LogicalIntersect;
 import org.apache.doris.nereids.trees.plans.logical.LogicalJoin;
 import org.apache.doris.nereids.trees.plans.logical.LogicalProject;
 import org.apache.doris.nereids.trees.plans.logical.LogicalRelation;
@@ -52,6 +53,7 @@ import org.apache.doris.nereids.trees.plans.logical.LogicalUnion;
 import org.apache.doris.nereids.trees.plans.visitor.DefaultPlanRewriter;
 import org.apache.doris.nereids.types.BigIntType;
 import org.apache.doris.nereids.types.DataType;
+import org.apache.doris.nereids.types.coercion.CharacterType;
 import org.apache.doris.nereids.util.JoinUtils;
 import org.apache.doris.nereids.util.TypeCoercionUtils;
 import org.apache.doris.qe.ConnectContext;
@@ -110,7 +112,8 @@ public class EagerAggRewriter extends DefaultPlanRewriter<PushDownAggContext> {
         }
         ConnectContext connectContext = context.getCascadesContext().getConnectContext();
         if (context.isPassThroughJoinOrUnion() && connectContext.getSessionVariable().eagerAggregationOnBroadcastJoin
-                && isSmallBroadcastJoin(join, connectContext) && isBottomJoin(join)) {
+                && isSmallBroadcastJoin(join, connectContext) && isBottomJoin(join)
+                && !outputStringType(join.right())) {
             Plan aggOnJoin = genAggregate(join, context);
             if (aggOnJoin != join) {
                 return aggOnJoin;
@@ -161,9 +164,11 @@ public class EagerAggRewriter extends DefaultPlanRewriter<PushDownAggContext> {
         boolean rightNeedOutputCount = needOutputCountForJoinChild(join, toRight, toLeft,
                 context.needOutputCount(), leftFuncs);
         Optional<PushDownAggContext> leftChildContext = toLeft ? Optional.of(context.forOneBranch(leftFuncs,
-                leftAliasMap, leftChildGroupByKeys, passThroughBigJoin, leftNeedOutputCount)) : Optional.empty();
+                leftAliasMap, leftChildGroupByKeys, passThroughBigJoin || outputStringType(join.right()),
+                leftNeedOutputCount)) : Optional.empty();
         Optional<PushDownAggContext> rightChildContext = toRight ? Optional.of(context.forOneBranch(rightFuncs,
-                rightAliasMap, rightChildGroupByKeys, passThroughBigJoin, rightNeedOutputCount)) : Optional.empty();
+                rightAliasMap, rightChildGroupByKeys, passThroughBigJoin || outputStringType(join.left()),
+                rightNeedOutputCount)) : Optional.empty();
 
         Plan newLeft = join.left();
         Plan newRight = join.right();
@@ -188,6 +193,10 @@ public class EagerAggRewriter extends DefaultPlanRewriter<PushDownAggContext> {
                     leftChildCountSlot, rightChildCountSlot);
         }
         return newJoin;
+    }
+
+    private boolean outputStringType(Plan plan) {
+        return plan.getOutput().stream().anyMatch(slot -> slot.getDataType() instanceof CharacterType);
     }
 
     private Pair<Boolean, Boolean> decideJoinPushSide(
@@ -742,6 +751,11 @@ public class EagerAggRewriter extends DefaultPlanRewriter<PushDownAggContext> {
     @Override
     public Plan visitLogicalAggregate(LogicalAggregate<? extends Plan> agg, PushDownAggContext context) {
         return agg;
+    }
+
+    @Override
+    public Plan visitLogicalIntersect(LogicalIntersect intersect, PushDownAggContext context) {
+        return intersect;
     }
 
     @Override
