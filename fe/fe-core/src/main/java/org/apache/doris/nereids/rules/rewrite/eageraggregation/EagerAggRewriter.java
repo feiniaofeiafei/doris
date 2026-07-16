@@ -158,16 +158,19 @@ public class EagerAggRewriter extends DefaultPlanRewriter<PushDownAggContext> {
             }
         }
 
-        boolean passThroughBigJoin = isPassThroughBigJoin(join, context);
         boolean leftNeedOutputCount = needOutputCountForJoinChild(join, toLeft, toRight,
                 context.needOutputCount(), rightFuncs);
         boolean rightNeedOutputCount = needOutputCountForJoinChild(join, toRight, toLeft,
                 context.needOutputCount(), leftFuncs);
         Optional<PushDownAggContext> leftChildContext = toLeft ? Optional.of(context.forOneBranch(leftFuncs,
-                leftAliasMap, leftChildGroupByKeys, passThroughBigJoin || outputStringType(join.right()),
+                leftAliasMap, leftChildGroupByKeys,
+                SessionVariable.getEagerAggregationMode() > 0 || context.isPassThroughBigJoin()
+                        || outputStringType(join.right()),
                 leftNeedOutputCount)) : Optional.empty();
         Optional<PushDownAggContext> rightChildContext = toRight ? Optional.of(context.forOneBranch(rightFuncs,
-                rightAliasMap, rightChildGroupByKeys, passThroughBigJoin || outputStringType(join.left()),
+                rightAliasMap, rightChildGroupByKeys,
+                SessionVariable.getEagerAggregationMode() > 0 || context.isPassThroughBigJoin()
+                        || outputStringType(join.left()),
                 rightNeedOutputCount)) : Optional.empty();
 
         Plan newLeft = join.left();

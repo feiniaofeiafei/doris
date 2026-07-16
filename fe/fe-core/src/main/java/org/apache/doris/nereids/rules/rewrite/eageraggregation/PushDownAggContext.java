@@ -149,7 +149,7 @@ public class PushDownAggContext {
     public PushDownAggContext withGroupKeys(List<SlotReference> groupKeys) {
         return new PushDownAggContext(aggFunctions, groupKeys, aliasMap,
                 cascadesContext, passThroughBigJoin, hasDecomposedAggIf, hasCaseWhen,
-                bilateralState, needOutputCount, passThroughBigJoin);
+                bilateralState, needOutputCount, isPassThroughJoinOrUnion);
     }
 
     /**
