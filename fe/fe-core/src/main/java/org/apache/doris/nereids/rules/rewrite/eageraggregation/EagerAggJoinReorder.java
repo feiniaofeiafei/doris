@@ -36,6 +36,7 @@ import org.apache.doris.nereids.trees.plans.algebra.CatalogRelation;
 import org.apache.doris.nereids.trees.plans.logical.LogicalAggregate;
 import org.apache.doris.nereids.trees.plans.logical.LogicalFilter;
 import org.apache.doris.nereids.trees.plans.logical.LogicalJoin;
+import org.apache.doris.nereids.trees.plans.visitor.DefaultPlanRewriter;
 import org.apache.doris.nereids.util.JoinUtils;
 import org.apache.doris.nereids.util.PlanUtils;
 import org.apache.doris.qe.SessionVariable;
@@ -60,7 +61,7 @@ import java.util.stream.Collectors;
  * untouched. The search is a connected greedy search: choose the cheapest connected pair, then
  * repeatedly attach the cheapest predicate-connected atom to form a left-deep tree.</p>
  */
-final class EagerAggJoinReorder {
+final class EagerAggJoinReorder extends DefaultPlanRewriter<EagerAggJoinReorder.RewriteContext> {
     private final ReorderJoin reorderJoin = new ReorderJoin();
     private final StatsDerive statsDerive = new StatsDerive(false);
 
@@ -74,35 +75,44 @@ final class EagerAggJoinReorder {
                 || context.isLeadingDisableJoinReorder()) {
             return root;
         }
-        return rewriteTree(root, false, false, context);
+        return root.accept(this, new RewriteContext(context, false, false));
     }
 
-    private Plan rewriteTree(Plan root, boolean underAggregate, boolean insideJoinCluster,
-            CascadesContext context) {
-        if (root instanceof LogicalAggregate) {
-            LogicalAggregate<?> aggregate = (LogicalAggregate<?>) root;
-            boolean reorderAggregateChild = !aggregate.getSourceRepeat().isPresent()
-                    && !aggregate.getGroupByExpressions().isEmpty();
-            Plan child = aggregate.child();
-            Plan newChild = rewriteTree(child, reorderAggregateChild, false, context);
-            return newChild == child ? root : root.withChildren(Collections.singletonList(newChild));
-        }
+    @Override
+    public Plan visit(Plan plan, RewriteContext context) {
+        return DefaultPlanRewriter.visitChildren(this, plan, context.forPlanChildren(false));
+    }
 
-        boolean joinClusterNode = underAggregate && isInnerJoinClusterNode(root);
-        List<Plan> children = new ArrayList<>(root.children().size());
-        boolean childrenChanged = false;
-        for (Plan child : root.children()) {
-            boolean childInsideCluster = joinClusterNode && isInnerJoinClusterNode(child);
-            Plan newChild = rewriteTree(child, underAggregate, childInsideCluster, context);
-            children.add(newChild);
-            childrenChanged |= newChild != child;
-        }
-        Plan current = childrenChanged ? root.withChildren(children) : root;
+    @Override
+    public Plan visitLogicalAggregate(LogicalAggregate<? extends Plan> aggregate, RewriteContext context) {
+        boolean reorderAggregateChild = !aggregate.getSourceRepeat().isPresent()
+                && !aggregate.getGroupByExpressions().isEmpty();
+        Plan child = aggregate.child();
+        Plan newChild = child.accept(this, context.forAggregateChild(reorderAggregateChild));
+        return newChild == child ? aggregate : aggregate.withChildren(Collections.singletonList(newChild));
+    }
 
-        if (joinClusterNode && !insideJoinCluster) {
-            return reorderJoinCluster(current, context);
+    @Override
+    public Plan visitLogicalFilter(LogicalFilter<? extends Plan> filter, RewriteContext context) {
+        if (context.underAggregate && isInnerJoinClusterNode(filter)) {
+            return visitJoinClusterNode(filter, context);
         }
-        return current;
+        return super.visitLogicalFilter(filter, context);
+    }
+
+    @Override
+    public Plan visitLogicalJoin(LogicalJoin<? extends Plan, ? extends Plan> join, RewriteContext context) {
+        if (context.underAggregate && join.getJoinType().isInnerOrCrossJoin()) {
+            return visitJoinClusterNode(join, context);
+        }
+        return super.visitLogicalJoin(join, context);
+    }
+
+    private Plan visitJoinClusterNode(Plan root, RewriteContext context) {
+        Plan current = DefaultPlanRewriter.visitChildren(this, root, context.forPlanChildren(true));
+        return context.parentIsJoinCluster
+                ? current
+                : reorderJoinCluster(current, context.cascadesContext);
     }
 
     private boolean isInnerJoinClusterNode(Plan root) {
@@ -330,6 +340,27 @@ final class EagerAggJoinReorder {
             this.plan = plan;
             this.rowCount = rowCount;
             this.index = index;
+        }
+    }
+
+    static class RewriteContext {
+        private final CascadesContext cascadesContext;
+        private final boolean underAggregate;
+        private final boolean parentIsJoinCluster;
+
+        private RewriteContext(CascadesContext cascadesContext, boolean underAggregate,
+                boolean parentIsJoinCluster) {
+            this.cascadesContext = cascadesContext;
+            this.underAggregate = underAggregate;
+            this.parentIsJoinCluster = parentIsJoinCluster;
+        }
+
+        private RewriteContext forAggregateChild(boolean reorderAggregateChild) {
+            return new RewriteContext(cascadesContext, reorderAggregateChild, false);
+        }
+
+        private RewriteContext forPlanChildren(boolean parentIsJoinCluster) {
+            return new RewriteContext(cascadesContext, underAggregate, parentIsJoinCluster);
         }
     }
 
