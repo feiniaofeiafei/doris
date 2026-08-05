@@ -69,6 +69,7 @@ public class PushDownAggregation extends DefaultPlanRewriter<JobContext> impleme
     private static final Logger LOG = LoggerFactory.getLogger(PushDownAggregation.class);
 
     public final EagerAggRewriter writer = new EagerAggRewriter();
+    private final EagerAggJoinReorder eagerAggJoinReorder = new EagerAggJoinReorder();
 
     private final Set<Class> pushDownAggFunctionSet = Sets.newHashSet(
             Count.class,
@@ -99,7 +100,8 @@ public class PushDownAggregation extends DefaultPlanRewriter<JobContext> impleme
         if (mode < 0) {
             return plan;
         } else {
-            Plan result = plan.accept(this, jobContext);
+            Plan reorderedPlan = eagerAggJoinReorder.rewrite(plan, jobContext.getCascadesContext());
+            Plan result = reorderedPlan.accept(this, jobContext);
             if (SessionVariable.isFeDebug()) {
                 result = new AdjustNullable(true).rewriteRoot(result, null);
             }
