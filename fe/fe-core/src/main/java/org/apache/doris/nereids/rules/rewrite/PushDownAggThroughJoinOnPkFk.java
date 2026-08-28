@@ -25,6 +25,7 @@ import org.apache.doris.nereids.trees.expressions.Alias;
 import org.apache.doris.nereids.trees.expressions.Expression;
 import org.apache.doris.nereids.trees.expressions.NamedExpression;
 import org.apache.doris.nereids.trees.expressions.Slot;
+import org.apache.doris.nereids.trees.expressions.functions.agg.AggregateFunction;
 import org.apache.doris.nereids.trees.expressions.functions.agg.Count;
 import org.apache.doris.nereids.trees.plans.Plan;
 import org.apache.doris.nereids.trees.plans.algebra.Project;
@@ -32,6 +33,7 @@ import org.apache.doris.nereids.trees.plans.logical.LogicalAggregate;
 import org.apache.doris.nereids.trees.plans.logical.LogicalJoin;
 import org.apache.doris.nereids.trees.plans.logical.LogicalProject;
 import org.apache.doris.nereids.util.JoinUtils;
+import org.apache.doris.nereids.util.Utils;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -43,9 +45,11 @@ import java.util.BitSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -103,25 +107,24 @@ public class PushDownAggThroughJoinOnPkFk implements RewriteRuleFactory {
         }
         for (Entry<BitSet, LogicalJoin<?, ?>> e : innerJoinCluster.getJoinsMap().entrySet()) {
             LogicalJoin<?, ?> subJoin = e.getValue();
-            Pair<Plan, Plan> primaryAndForeign = tryExtractPrimaryForeign(subJoin);
-            if (primaryAndForeign == null) {
+            PrimaryForeignInfo primaryForeignInfo = tryExtractPrimaryForeign(subJoin);
+            if (primaryForeignInfo == null) {
                 continue;
             }
-            LogicalAggregate<?> newAgg =
-                    eliminatePrimaryOutput(agg, subJoin, primaryAndForeign.first, primaryAndForeign.second);
+            LogicalAggregate<?> newAgg = eliminatePrimaryOutput(agg, subJoin, primaryForeignInfo);
             if (newAgg == null) {
                 continue;
             }
             LogicalJoin<?, ?> newJoin = innerJoinCluster
-                    .constructJoinWithPrimary(e.getKey(), subJoin, primaryAndForeign.first);
-            if (newJoin != null && newJoin.left() == primaryAndForeign.first) {
+                    .constructJoinWithPrimary(e.getKey(), subJoin, primaryForeignInfo.primary);
+            if (newJoin != null && newJoin.left() == primaryForeignInfo.primary) {
                 newJoin = (LogicalJoin<?, ?>) newJoin
                         .withChildren(newJoin.left(), newAgg.withChildren(newJoin.right()));
                 if (Sets.union(newJoin.left().getOutputSet(), newJoin.right().getOutputSet())
                         .containsAll(newJoin.getInputSlots())) {
                     return newJoin;
                 }
-            } else if (newJoin != null && newJoin.right() == primaryAndForeign.first) {
+            } else if (newJoin != null && newJoin.right() == primaryForeignInfo.primary) {
                 newJoin = (LogicalJoin<?, ?>) newJoin
                         .withChildren(newAgg.withChildren(newJoin.left()), newJoin.right());
                 if (Sets.union(newJoin.left().getOutputSet(), newJoin.right().getOutputSet())
@@ -138,7 +141,15 @@ public class PushDownAggThroughJoinOnPkFk implements RewriteRuleFactory {
     // select primary_table_pk, primary_table_other from primary_table join foreign_table on pk = fk
     // group by pk, primary_table_other_cols;
     private LogicalAggregate<?> eliminatePrimaryOutput(LogicalAggregate<?> agg, Plan child,
-            Plan primary, Plan foreign) {
+            PrimaryForeignInfo primaryForeignInfo) {
+        Set<Expression> gbyKeys = Utils.fastToImmutableSet(agg.getGroupByExpressions());
+        if (!gbyKeys.containsAll(primaryForeignInfo.foreignKeys)
+                && !gbyKeys.containsAll(primaryForeignInfo.primaryKeys)) {
+            return null;
+        }
+
+        Plan primary = primaryForeignInfo.primary;
+        Plan foreign = primaryForeignInfo.foreign;
         Set<Slot> aggInputs = agg.getInputSlots();
         if (primary.getOutputSet().stream().noneMatch(aggInputs::contains)) {
             return agg;
@@ -178,19 +189,22 @@ public class PushDownAggThroughJoinOnPkFk implements RewriteRuleFactory {
         // Thirdly, construct new Agg below join.
         // For the pk-fk join, the foreign table side will not expand rows.
         // As a result, executing agg(group by fk) before join is same with executing agg(group by fk) after join.
-        Set<Expression> newGroupBySlots = constructNewGroupBy(minGroupBySlotList, primaryOutputSet,
-                primaryToForeignDeps);
+        List<Expression> newGroupBySlots = constructNewGroupBy(minGroupBySlotList, primaryOutputSet,
+                primaryToForeignDeps, primaryForeignInfo.foreignKeys);
+        if (newGroupBySlots == null) {
+            return null;
+        }
         List<NamedExpression> newOutput = constructNewOutput(
-                agg, primaryOutputSet, primaryToForeignDeps, funcDepsForJoin, primary);
-        if (newGroupBySlots == null || newOutput == null) {
+                agg, primaryOutputSet, primaryToForeignDeps, newGroupBySlots);
+        if (newOutput == null) {
             return null;
         }
         return agg.withGroupByAndOutput(ImmutableList.copyOf(newGroupBySlots), ImmutableList.copyOf(newOutput));
     }
 
-    private @Nullable Set<Expression> constructNewGroupBy(List<? extends Expression> gbyExpression,
-            Set<Slot> primaryOutputs, Map<Slot, Slot> primaryToForeignBiDeps) {
-        Set<Expression> newGroupBySlots = new HashSet<>();
+    private @Nullable List<Expression> constructNewGroupBy(List<? extends Expression> gbyExpression,
+            Set<Slot> primaryOutputs, Map<Slot, Slot> primaryToForeignBiDeps, Set<Slot> foreignKeys) {
+        Set<Expression> newGroupBySlots = new LinkedHashSet<>(foreignKeys);
         for (Expression expression : gbyExpression) {
             if (!(expression instanceof Slot)) {
                 return null;
@@ -202,63 +216,76 @@ public class PushDownAggThroughJoinOnPkFk implements RewriteRuleFactory {
             expression = primaryToForeignBiDeps.getOrDefault(expression, (Slot) expression);
             newGroupBySlots.add(expression);
         }
-        return newGroupBySlots;
+        return Utils.fastToImmutableList(newGroupBySlots);
     }
 
     private @Nullable List<NamedExpression> constructNewOutput(LogicalAggregate<?> agg, Set<Slot> primaryOutput,
-            Map<Slot, Slot> primaryToForeignDeps, FuncDeps funcDeps, Plan primaryPlan) {
-        List<NamedExpression> newOutput = new ArrayList<>();
+            Map<Slot, Slot> primaryToForeignDeps, List<Expression> newGroupBySlots) {
+        List<NamedExpression> newOutput = new ArrayList<NamedExpression>((List) newGroupBySlots);
         for (NamedExpression expression : agg.getOutputExpressions()) {
-            // There are three cases for output expressions:
-            // 1. Slot: the slot is from primary plan, we need to replace it with
-            //             the corresponding slot from foreign plan,
-            //             or skip it when it isn't in group by.
-            // 2. Count: the count is from primary plan,
-            //             we need to replace the slot in the count with the corresponding slot
-            //             from foreign plan
-            if (expression instanceof Slot && primaryPlan.getOutput().contains(expression)) {
-                if (primaryToForeignDeps.containsKey(expression)) {
-                    expression = primaryToForeignDeps.getOrDefault(expression, expression.toSlot());
-                } else {
-                    continue;
-                }
+            if (!(expression instanceof Alias)) {
+                continue;
             }
-            if (expression instanceof Alias
-                    && expression.child(0) instanceof Count
-                    && expression.child(0).arity() > 0
-                    && expression.child(0).child(0) instanceof Slot) {
-                // count(slot) can be rewritten by circle deps
-                Slot slot = (Slot) expression.child(0).child(0);
-                if (primaryToForeignDeps.containsKey(slot)) {
-                    expression = (NamedExpression) expression.rewriteUp(e ->
+            Alias alias = (Alias) expression;
+            if (expression.getInputSlots().stream().anyMatch(primaryOutput::contains)) {
+                Optional<Expression> optional = expression.collectFirst(e -> e instanceof AggregateFunction);
+                if (!optional.isPresent()) {
+                    return null;
+                }
+                Expression aggFunc = optional.get();
+                if (aggFunc instanceof Count) {
+                    for (Expression child : aggFunc.children()) {
+                        if (!(child instanceof Slot)) {
+                            return null;
+                        }
+                        if (primaryOutput.contains(child) && !primaryToForeignDeps.containsKey(child)) {
+                            return null;
+                        }
+                    }
+                    NamedExpression newExpression = (NamedExpression) expression.rewriteUp(e ->
                             e instanceof Slot
                                     ? primaryToForeignDeps.getOrDefault((Slot) e, (Slot) e)
                                     : e);
+                    newOutput.add(newExpression);
+                } else {
+                    return null;
                 }
+            } else {
+                newOutput.add(alias);
             }
-            if (!(expression instanceof Slot)
-                    && expression.getInputSlots().stream().anyMatch(primaryOutput::contains)) {
-                return null;
-            }
-            newOutput.add(expression);
         }
         return newOutput;
     }
 
-    // try to extract primary key table and foreign key table
-    private @Nullable Pair<Plan, Plan> tryExtractPrimaryForeign(LogicalJoin<?, ?> join) {
-        Plan primary;
-        Plan foreign;
-        if (JoinUtils.canEliminateByFk(join, join.left(), join.right())) {
-            primary = join.left();
-            foreign = join.right();
-        } else if (JoinUtils.canEliminateByFk(join, join.right(), join.left())) {
-            primary = join.right();
-            foreign = join.left();
-        } else {
-            return null;
+    private static class PrimaryForeignInfo {
+        final Plan primary;
+        final Plan foreign;
+        final Set<Slot> primaryKeys;
+        final Set<Slot> foreignKeys;
+
+        PrimaryForeignInfo(
+                Plan primary,
+                Plan foreign,
+                Set<Slot> primaryKeys,
+                Set<Slot> foreignKeys) {
+            this.primary = primary;
+            this.foreign = foreign;
+            this.primaryKeys = ImmutableSet.copyOf(primaryKeys);
+            this.foreignKeys = ImmutableSet.copyOf(foreignKeys);
         }
-        return Pair.of(primary, foreign);
+    }
+
+    // try to extract primary key table and foreign key table
+    private @Nullable PrimaryForeignInfo tryExtractPrimaryForeign(LogicalJoin<?, ?> join) {
+        Pair<Set<Slot>, Set<Slot>> res = JoinUtils.canEliminateByFk2(join, join.left(), join.right());
+        if (res != null) {
+            return new PrimaryForeignInfo(join.left(), join.right(), res.first, res.second);
+        }
+        res = JoinUtils.canEliminateByFk2(join, join.right(), join.left());
+        if (res != null) {
+            return new PrimaryForeignInfo(join.right(), join.left(), res.first, res.second);
+        }
+        return null;
     }
 
     /**
