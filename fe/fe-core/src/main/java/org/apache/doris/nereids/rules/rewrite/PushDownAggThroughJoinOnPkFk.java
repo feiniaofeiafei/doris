@@ -18,6 +18,7 @@
 package org.apache.doris.nereids.rules.rewrite;
 
 import org.apache.doris.common.Pair;
+import org.apache.doris.nereids.properties.DataTrait;
 import org.apache.doris.nereids.properties.FuncDeps;
 import org.apache.doris.nereids.rules.Rule;
 import org.apache.doris.nereids.rules.RuleType;
@@ -142,16 +143,20 @@ public class PushDownAggThroughJoinOnPkFk implements RewriteRuleFactory {
     // group by pk, primary_table_other_cols;
     private LogicalAggregate<?> eliminatePrimaryOutput(LogicalAggregate<?> agg, Plan child,
             PrimaryForeignInfo primaryForeignInfo) {
-        Set<Expression> gbyKeys = Utils.fastToImmutableSet(agg.getGroupByExpressions());
-        if (!gbyKeys.containsAll(primaryForeignInfo.foreignKeys)
-                && !gbyKeys.containsAll(primaryForeignInfo.primaryKeys)) {
+        Set<Slot> groupBySlots = agg.getGroupByExpressions().stream()
+                .map(Slot.class::cast)
+                .collect(ImmutableSet.toImmutableSet());
+        DataTrait dataTrait = child.getLogicalProperties().getTrait();
+        if (!groupByDeterminesForeignKey(groupBySlots, primaryForeignInfo.foreignKeys, dataTrait)) {
             return null;
         }
 
         Plan primary = primaryForeignInfo.primary;
         Plan foreign = primaryForeignInfo.foreign;
         Set<Slot> aggInputs = agg.getInputSlots();
-        if (primary.getOutputSet().stream().noneMatch(aggInputs::contains)) {
+        // An indirectly determined foreign key still needs to be added to the pushed aggregate.
+        if (primary.getOutputSet().stream().noneMatch(aggInputs::contains)
+                && groupBySlots.containsAll(primaryForeignInfo.foreignKeys)) {
             return agg;
         }
         // Firstly, using fd to eliminate group by key.
@@ -159,7 +164,7 @@ public class PushDownAggThroughJoinOnPkFk implements RewriteRuleFactory {
         // -> group by pk;
         Set<Expression> removeExpression = EliminateGroupByKey.findCanBeRemovedExpressions(agg,
                 Sets.intersection(agg.getOutputSet(), foreign.getOutputSet()),
-                child.getLogicalProperties().getTrait());
+                dataTrait);
         List<Expression> minGroupBySlotList = new ArrayList<>();
         for (Expression expression : agg.getGroupByExpressions()) {
             if (!removeExpression.contains(expression)) {
@@ -173,8 +178,8 @@ public class PushDownAggThroughJoinOnPkFk implements RewriteRuleFactory {
         Set<Slot> primaryOutputSet = primary.getOutputSet();
         Set<Slot> primarySlots = Sets.intersection(aggInputs, primaryOutputSet);
         HashMap<Slot, Slot> primaryToForeignDeps = new HashMap<>();
-        FuncDeps funcDepsForJoin = child.getLogicalProperties().getTrait()
-                .getAllValidFuncDeps(Sets.union(primaryOutputSet, foreign.getOutputSet()));
+        FuncDeps funcDepsForJoin = dataTrait.getAllValidFuncDeps(
+                Sets.union(primaryOutputSet, foreign.getOutputSet()));
         for (Slot slot : primarySlots) {
             Set<Set<Slot>> replacedSlotSets = funcDepsForJoin.findBijectionSlots(ImmutableSet.of(slot));
             for (Set<Slot> replacedSlots : replacedSlotSets) {
@@ -429,5 +434,33 @@ public class PushDownAggThroughJoinOnPkFk implements RewriteRuleFactory {
                     && !((LogicalJoin<?, ?>) plan).isMarkJoin()
                     && ((LogicalJoin<?, ?>) plan).getOtherJoinConjuncts().isEmpty();
         }
+    }
+
+    /** Check whether the functional-dependency closure of GROUP BY contains the complete foreign key. */
+    private boolean groupByDeterminesForeignKey(
+            Set<Slot> groupBySlots,
+            Set<Slot> foreignKeySlots,
+            DataTrait dataTrait) {
+        if (groupBySlots.containsAll(foreignKeySlots)) {
+            return true;
+        }
+
+        Set<Slot> validSlots = Sets.union(
+                groupBySlots, foreignKeySlots).immutableCopy();
+
+        FuncDeps funcDeps = dataTrait.getAllValidFuncDeps(validSlots);
+        Set<Slot> closure = new HashSet<>(groupBySlots);
+
+        boolean changed;
+        do {
+            changed = false;
+            for (FuncDeps.FuncDepsItem item : funcDeps.getItems()) {
+                if (closure.containsAll(item.determinants)) {
+                    changed |= closure.addAll(item.dependencies);
+                }
+            }
+        } while (changed);
+
+        return closure.containsAll(foreignKeySlots);
     }
 }

@@ -17,6 +17,7 @@
 
 package org.apache.doris.nereids.rules.rewrite;
 
+import org.apache.doris.nereids.rules.analysis.LogicalSubQueryAliasToLogicalProject;
 import org.apache.doris.nereids.trees.expressions.Slot;
 import org.apache.doris.nereids.trees.plans.logical.LogicalAggregate;
 import org.apache.doris.nereids.util.MemoPatternMatchSupported;
@@ -219,48 +220,27 @@ class PushDownAggThroughJoinOnPkFkTest extends TestWithFeService implements Memo
     void testAddForeignKeyToGroupByWhenGroupingByForeignPrimaryKey() {
         String sql = "select f.amount, count(f.row_id) from pk_parent p "
                 + "inner join fk_child f on p.id = f.parent_id "
-                + "group by p.id, f.row_id, f.amount";
-        PlanChecker.from(connectContext)
-                .analyze(sql)
-                .rewrite()
-                .matches(logicalJoin(logicalProject(logicalAggregate().when(aggregate -> getGroupBySlotNames(aggregate)
-                        .equals(ImmutableSet.of("row_id", "parent_id", "amount")))), any()))
-                .printlnTree();
-    }
-
-    @Test
-    void testPushDownWhenGroupByContainsOnlyForeignKey() {
-        String sql = "select f.amount, count(f.row_id) from pk_parent p "
-                + "inner join fk_child f on p.id = f.parent_id "
-                + "group by f.parent_id, f.amount";
-        PlanChecker.from(connectContext)
-                .analyze(sql)
-                .rewrite()
-                .matches(logicalJoin(logicalAggregate().when(aggregate -> getGroupBySlotNames(aggregate)
-                        .equals(ImmutableSet.of("parent_id", "amount"))), any()))
-                .printlnTree();
-    }
-
-    @Test
-    void testNotPushDownWhenGroupByContainsNeitherPrimaryNorForeignKey() {
-        String sql = "select f.amount, count(f.row_id) from pk_parent p "
-                + "inner join fk_child f on p.id = f.parent_id "
                 + "group by f.row_id, f.amount";
         PlanChecker.from(connectContext)
                 .analyze(sql)
-                .rewrite()
-                .matches(logicalAggregate(logicalProject(logicalJoin())))
+                .applyTopDown(new LogicalSubQueryAliasToLogicalProject())
+                .applyTopDown(new FindHashConditionForJoin())
+                .applyTopDown(new PushDownAggThroughJoinOnPkFk())
+                .matches(logicalJoin(logicalAggregate().when(aggregate -> getGroupBySlotNames(aggregate)
+                        .equals(ImmutableSet.of("row_id", "parent_id"))), any()))
                 .printlnTree();
     }
 
     @Test
-    void testNotPushDownWithAdditionalJoinCondition() {
+    void testNotPushDownWhenGroupByDoesNotDetermineForeignKey() {
         String sql = "select f.amount, count(f.row_id) from pk_parent p "
-                + "inner join fk_child f on p.id = f.parent_id and p.name = f.parent_name "
-                + "group by p.id, f.row_id, f.amount";
+                + "inner join fk_child f on p.id = f.parent_id "
+                + "group by f.amount";
         PlanChecker.from(connectContext)
                 .analyze(sql)
-                .rewrite()
+                .applyTopDown(new LogicalSubQueryAliasToLogicalProject())
+                .applyTopDown(new FindHashConditionForJoin())
+                .applyTopDown(new PushDownAggThroughJoinOnPkFk())
                 .matches(logicalAggregate(logicalProject(logicalJoin())))
                 .printlnTree();
     }
