@@ -17,7 +17,6 @@
 
 package org.apache.doris.nereids.rules.rewrite;
 
-import org.apache.doris.nereids.rules.analysis.LogicalSubQueryAliasToLogicalProject;
 import org.apache.doris.nereids.trees.expressions.Slot;
 import org.apache.doris.nereids.trees.plans.logical.LogicalAggregate;
 import org.apache.doris.nereids.util.MemoPatternMatchSupported;
@@ -218,16 +217,15 @@ class PushDownAggThroughJoinOnPkFkTest extends TestWithFeService implements Memo
 
     @Test
     void testAddForeignKeyToGroupByWhenGroupingByForeignPrimaryKey() {
-        String sql = "select f.amount, count(f.row_id) from pk_parent p "
+        String sql = "select p.name, count(f.row_id) from pk_parent p "
                 + "inner join fk_child f on p.id = f.parent_id "
-                + "group by f.row_id, f.amount";
+                + "group by f.row_id, f.amount, p.name";
         PlanChecker.from(connectContext)
                 .analyze(sql)
-                .applyTopDown(new LogicalSubQueryAliasToLogicalProject())
-                .applyTopDown(new FindHashConditionForJoin())
-                .applyTopDown(new PushDownAggThroughJoinOnPkFk())
-                .matches(logicalJoin(logicalAggregate().when(aggregate -> getGroupBySlotNames(aggregate)
-                        .equals(ImmutableSet.of("row_id", "parent_id"))), any()))
+                .rewrite()
+                .matches(logicalJoin(logicalProject(logicalAggregate()
+                        .when(agg -> getGroupBySlotNames(agg).equals(
+                                ImmutableSet.of("parent_id", "row_id", "amount")))), any()))
                 .printlnTree();
     }
 
@@ -238,9 +236,7 @@ class PushDownAggThroughJoinOnPkFkTest extends TestWithFeService implements Memo
                 + "group by f.amount";
         PlanChecker.from(connectContext)
                 .analyze(sql)
-                .applyTopDown(new LogicalSubQueryAliasToLogicalProject())
-                .applyTopDown(new FindHashConditionForJoin())
-                .applyTopDown(new PushDownAggThroughJoinOnPkFk())
+                .rewrite()
                 .matches(logicalAggregate(logicalProject(logicalJoin())))
                 .printlnTree();
     }
