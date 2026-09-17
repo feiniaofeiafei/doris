@@ -732,10 +732,10 @@ public class UnequalPredicateInferTest {
             // not discard a distinct reverse inequality needed to keep the contradiction.
             Set<Expression> inputs = new LinkedHashSet<>(predicates);
             assertPredicateSemantics(inputs, UnequalPredicateInfer.inferUnequalPredicates(inputs), a, b, c);
+            assertPredicateSemantics(inputs, UnequalPredicateInfer.inferAllPredicates(inputs), a, b, c);
             for (List<Expression> permutation : Collections2.permutations(predicates)) {
                 inputs = new LinkedHashSet<>(permutation);
                 assertPredicateSemantics(inputs, UnequalPredicateInfer.inferUnequalPredicates(inputs), a, b, c);
-                assertPredicateSemantics(inputs, UnequalPredicateInfer.inferAllPredicates(inputs), a, b, c);
             }
         }
     }

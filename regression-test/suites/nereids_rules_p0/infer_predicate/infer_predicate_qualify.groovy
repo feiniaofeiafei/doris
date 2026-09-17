@@ -29,6 +29,23 @@ suite("infer_predicate_qualify") {
         from infer_predicate_qualify_input t
         qualify t.a > t.b and rn > t.b and t.a > rn
     """
+    // Materialize the window output to check the same filter independently of QUALIFY inference.
+    sql "drop table if exists infer_predicate_qualify_windowed"
+    sql """
+        create table infer_predicate_qualify_windowed (
+            k bigint not null, a bigint not null, b bigint not null, rn bigint not null
+        ) duplicate key(k) distributed by hash(k) buckets 1
+        properties("replication_num"="1")
+    """
+    sql """
+        insert into infer_predicate_qualify_windowed
+        select k, a, b, row_number() over (order by k) from infer_predicate_qualify_input
+    """
+    order_qt_windowed_rows "select * from infer_predicate_qualify_windowed"
+    order_qt_materialized_strict """
+        select k, a, b, rn from infer_predicate_qualify_windowed
+        where a > b and rn > b and a > rn
+    """
     order_qt_non_strict """
         select t.k, t.a, t.b, row_number() over (order by t.k) as rn
         from infer_predicate_qualify_input t
