@@ -32,11 +32,14 @@ import org.apache.doris.nereids.trees.expressions.SlotReference;
 import org.apache.doris.nereids.trees.expressions.StatementScopeIdGenerator;
 import org.apache.doris.nereids.trees.expressions.functions.agg.AggregateFunction;
 import org.apache.doris.nereids.trees.expressions.functions.agg.AnyValue;
+import org.apache.doris.nereids.trees.expressions.functions.agg.Avg;
 import org.apache.doris.nereids.trees.expressions.functions.agg.Count;
 import org.apache.doris.nereids.trees.expressions.functions.agg.Max;
 import org.apache.doris.nereids.trees.expressions.functions.agg.Min;
 import org.apache.doris.nereids.trees.expressions.functions.agg.Sum;
 import org.apache.doris.nereids.trees.expressions.functions.agg.Sum0;
+import org.apache.doris.nereids.trees.expressions.functions.combinator.CombineCombinator;
+import org.apache.doris.nereids.trees.expressions.functions.combinator.MergeCombinator;
 import org.apache.doris.nereids.trees.expressions.literal.BigIntLiteral;
 import org.apache.doris.nereids.trees.expressions.literal.NullLiteral;
 import org.apache.doris.nereids.trees.plans.Plan;
@@ -70,7 +73,9 @@ import java.util.Set;
 import java.util.TreeMap;
 
 /**
- * This rule will rewrite grouping sets. eg:
+ * This rule pre-aggregates grouping sets. With enable_decompose_repeat_with_agg_state,
+ * it produces Aggregate(merge) -> Repeat(all grouping sets) -> Aggregate(combine).
+ * Otherwise, it uses the CTE decomposition below. eg:
  *      select a, b, c, d, e sum(f) from t group by rollup(a, b, c, d, e);
  * rewrite to:
  *    with cte1 as (select a, b, c, d, e, sum(f) x from t group by rollup(a, b, c, d, e))
@@ -132,6 +137,9 @@ public class DecomposeRepeatWithPreAggregation extends DefaultPlanRewriter<Disti
         if (maxGroupIndex < 0) {
             return aggregate;
         }
+        if (ctx.cascadesContext.getConnectContext().getSessionVariable().enableDecomposeRepeatWithAggState) {
+            return constructAggStatePlan(aggregate, maxGroupIndex, ctx.cascadesContext.getConnectContext());
+        }
         Map<Slot, Slot> preToProducerSlotMap = new HashMap<>();
         LogicalCTEProducer<LogicalAggregate<Plan>> producer = constructProducer(aggregate, maxGroupIndex, ctx,
                 preToProducerSlotMap, ctx.cascadesContext.getConnectContext());
@@ -173,6 +181,49 @@ public class DecomposeRepeatWithPreAggregation extends DefaultPlanRewriter<Disti
                 groupingFunctionSlots, newRepeat.getGroupingId().get(), topAgg, aggFuncToSlot);
         LogicalPlan directChild = getDirectChild(directConsumer, groupingFunctionsValues, maxGroupIndex);
         return constructUnion(project, directChild, aggregate);
+    }
+
+    /**
+     * Pre-aggregate serialized states, repeat all grouping sets, and finalize with merge.
+     * Unlike the CTE path, the maximum grouping set also passes through the final aggregate.
+     */
+    private LogicalAggregate<Plan> constructAggStatePlan(LogicalAggregate<? extends Plan> aggregate,
+            int maxGroupIndex, ConnectContext connectContext) {
+        LogicalRepeat<?> repeat = (LogicalRepeat<?>) aggregate.child();
+        // Repeat makes grouping keys nullable. Use the child slots when constructing state types.
+        Map<Slot, Slot> inputSlots = new HashMap<>();
+        for (Slot slot : repeat.child().getOutput()) {
+            inputSlots.put(slot, slot);
+        }
+        List<Expression> groupBy = ExpressionUtils.replace(repeat.getGroupingSets().get(maxGroupIndex), inputSlots);
+        List<NamedExpression> preOutputs = new ArrayList<>();
+        for (Expression key : groupBy) {
+            preOutputs.add((NamedExpression) key);
+        }
+        Map<Expression, Expression> replacements = new HashMap<>();
+        for (AggregateFunction function : aggregate.getAggregateFunctions()) {
+            AggregateFunction nested = (AggregateFunction) ExpressionUtils.replace(function, inputSlots);
+            // AGG_STATE requires at least one argument. COUNT(*) and COUNT(1) count the same rows.
+            if (nested instanceof Count && nested.children().isEmpty()) {
+                nested = new Count(new BigIntLiteral(1));
+            }
+            Alias state = new Alias(new CombineCombinator(nested.children(), nested));
+            preOutputs.add(state);
+            replacements.put(function, new MergeCombinator(ImmutableList.of(state.toSlot()), nested));
+        }
+        LogicalAggregate<Plan> preAggregate = new LogicalAggregate<>(groupBy, preOutputs, repeat.child());
+        preAggregate = preAggregate.withPartitionExpressions(
+                choosePreAggShuffleKeyPartitionExprs(repeat, maxGroupIndex, groupBy, connectContext));
+        List<NamedExpression> repeatOutputs = new ArrayList<>(preAggregate.getOutput());
+        repeatOutputs.addAll(repeat.getGroupingScalarFunctionAlias());
+        LogicalRepeat<Plan> newRepeat = repeat.withAggOutput(repeatOutputs)
+                .withChildren(ImmutableList.of(preAggregate));
+        List<NamedExpression> outputs = aggregate.getOutputExpressions().stream()
+                .map(output -> (NamedExpression) ExpressionUtils.replace(output, replacements))
+                .collect(ImmutableList.toImmutableList());
+        return aggregate.withChildGroupByAndOutputAndSourceRepeatAndPartitionExpr(
+                aggregate.getGroupByExpressions(), outputs, aggregate.getPartitionExpressions(), newRepeat,
+                Optional.of(newRepeat));
     }
 
     /**
@@ -384,7 +435,7 @@ public class DecomposeRepeatWithPreAggregation extends DefaultPlanRewriter<Disti
      * Determine if optimization is possible; if so, return the index of the largest group.
      * The optimization requires:
      * 1. The aggregate's child must be a LogicalRepeat
-     * 2. All aggregate functions must be in SUPPORT_AGG_FUNCTIONS.
+     * 2. All aggregate functions must be supported (AVG additionally supports the AGG_STATE path).
      * 3. More than 3 grouping sets
      * 4. There exists a grouping set that contains all other grouping sets
      * @param aggregate the aggregate plan to check
@@ -399,7 +450,9 @@ public class DecomposeRepeatWithPreAggregation extends DefaultPlanRewriter<Disti
         // check agg func
         Set<AggregateFunction> aggFunctions = aggregate.getAggregateFunctions();
         for (AggregateFunction aggFunction : aggFunctions) {
-            if (!SUPPORT_AGG_FUNCTIONS.contains(aggFunction.getClass())) {
+            if (!SUPPORT_AGG_FUNCTIONS.contains(aggFunction.getClass())
+                    && !(connectContext.getSessionVariable().enableDecomposeRepeatWithAggState
+                    && aggFunction instanceof Avg)) {
                 return -1;
             }
             if (aggFunction.isDistinct()) {

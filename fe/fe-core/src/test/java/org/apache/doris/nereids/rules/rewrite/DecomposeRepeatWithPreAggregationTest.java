@@ -33,6 +33,7 @@ import org.apache.doris.nereids.trees.expressions.literal.BigIntLiteral;
 import org.apache.doris.nereids.trees.plans.Plan;
 import org.apache.doris.nereids.trees.plans.algebra.Repeat.RepeatType;
 import org.apache.doris.nereids.trees.plans.logical.LogicalAggregate;
+import org.apache.doris.nereids.trees.plans.logical.LogicalCTEAnchor;
 import org.apache.doris.nereids.trees.plans.logical.LogicalCTEConsumer;
 import org.apache.doris.nereids.trees.plans.logical.LogicalCTEProducer;
 import org.apache.doris.nereids.trees.plans.logical.LogicalEmptyRelation;
@@ -88,6 +89,71 @@ public class DecomposeRepeatWithPreAggregationTest extends TestWithFeService imp
                 MemoTestUtils.createCascadesContext(
                         new LogicalEmptyRelation(org.apache.doris.nereids.trees.expressions.StatementScopeIdGenerator.newRelationId(),
                                 ImmutableList.of())));
+    }
+
+    @Test
+    void rewriteWithAggStatePreservesAllGroupingSets() {
+        connectContext.getSessionVariable().enableDecomposeRepeatWithAggState = true;
+        try {
+            for (String grouping : ImmutableList.of("rollup(a,b,c)", "cube(a,b,c)",
+                    "grouping sets ((a), (a,b,c), (a,b), (), ())")) {
+                Plan plan = PlanChecker.from(connectContext)
+                        .analyze("select a,b,c,avg(d),sum(d),count(*),count(d),min(d),max(d),"
+                                + "sum0(d),grouping(a),grouping_id(a,b,c) from t1 group by " + grouping)
+                        .rewrite().getPlan();
+                String shape = plan.treeString();
+                Assertions.assertTrue(shape.contains("avg_combine"), shape);
+                Assertions.assertTrue(shape.contains("avg_merge"), shape);
+                Assertions.assertTrue(shape.contains("count_combine"), shape);
+                Assertions.assertFalse(plan.anyMatch(node -> node instanceof LogicalCTEAnchor), shape);
+                int expectedSets = grouping.startsWith("cube") ? 8 : grouping.startsWith("rollup") ? 4 : 5;
+                Assertions.assertTrue(plan.anyMatch(node -> node instanceof LogicalRepeat
+                        && ((LogicalRepeat<?>) node).getGroupingSets().size() == expectedSets
+                        && node.child(0) instanceof LogicalAggregate), shape);
+            }
+            PlanChecker.from(connectContext).checkExplain(
+                    "select a,b,c,avg(d),count(*) from t1 group by rollup(a,b,c)", planner -> {
+                        String shape = planner.getOptimizedPlan().treeString();
+                        Assertions.assertTrue(shape.contains("avg_combine"), shape);
+                        Assertions.assertTrue(shape.contains("avg_merge"), shape);
+                    });
+        } finally {
+            connectContext.getSessionVariable().enableDecomposeRepeatWithAggState = false;
+        }
+    }
+
+    @Test
+    void aggStateHandlesGroupingArgumentsAndExpressions() {
+        connectContext.getSessionVariable().enableDecomposeRepeatWithAggState = true;
+        try {
+            for (String sql : ImmutableList.of(
+                    "select a,b,c,avg(a),avg(a)+sum(d) from t1 group by rollup(a,b,c)",
+                    "select a+1,b,c,avg(d+1) from t1 group by rollup(a+1,b,c)",
+                    "select avg(d) from t1 group by rollup(a,b,c) having avg(d)>1")) {
+                String shape = PlanChecker.from(connectContext).analyze(sql).rewrite().getPlan().treeString();
+                Assertions.assertTrue(shape.contains("avg_combine"), shape);
+                Assertions.assertTrue(shape.contains("avg_merge"), shape);
+            }
+        } finally {
+            connectContext.getSessionVariable().enableDecomposeRepeatWithAggState = false;
+        }
+    }
+
+    @Test
+    void aggStateKeepsUnsupportedQueriesUnchanged() {
+        connectContext.getSessionVariable().enableDecomposeRepeatWithAggState = true;
+        try {
+            for (String sql : ImmutableList.of(
+                    "select avg(distinct d) from t1 group by rollup(a,b,c)",
+                    "select avg(d) from t1 group by rollup(a,b)",
+                    "select avg(d) from t1 group by grouping sets ((a,b),(b,c),(a,c),())",
+                    "select group_concat(cast(d as string)) from t1 group by rollup(a,b,c)")) {
+                String shape = PlanChecker.from(connectContext).analyze(sql).rewrite().getPlan().treeString();
+                Assertions.assertFalse(shape.contains("_combine"), shape);
+            }
+        } finally {
+            connectContext.getSessionVariable().enableDecomposeRepeatWithAggState = false;
+        }
     }
 
     @Test
