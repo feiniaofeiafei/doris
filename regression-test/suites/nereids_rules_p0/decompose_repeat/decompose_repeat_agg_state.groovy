@@ -18,15 +18,19 @@
 suite("decompose_repeat_agg_state") {
     sql "drop table if exists decompose_repeat_agg_state"
     sql """create table decompose_repeat_agg_state (
-        a int, b int, c int, v decimal(18, 2), n int not null
+        a int, b int, c int, v decimal(18, 2), n int not null, label varchar(20) not null default 'key'
     ) distributed by hash(a) buckets 3 properties('replication_num'='1')"""
-    sql """insert into decompose_repeat_agg_state values
+    sql """insert into decompose_repeat_agg_state(a,b,c,v,n) values
         (1,1,1,10,1),(1,1,1,20,2),(1,1,2,100,3),
         (1,2,1,null,4),(null,1,1,40,5),(null,1,1,null,6),
         (2,2,2,null,7),(2,2,2,null,8)"""
 
     // Differential checks use the original execution as the runtime oracle.
     def queries = [
+        """select label,b,c,avg(v),count(*),grouping_id(label,b,c)
+           from decompose_repeat_agg_state group by rollup(label,b,c)""",
+        """select n,b,c,avg(v),count(*),grouping_id(n,b,c)
+           from decompose_repeat_agg_state group by rollup(n,b,c)""",
         """select a,b,c,avg(v),sum(v),count(*),count(v),min(v),max(v),sum0(v),
                   grouping(a),grouping_id(a,b,c)
            from decompose_repeat_agg_state group by rollup(a,b,c)""",

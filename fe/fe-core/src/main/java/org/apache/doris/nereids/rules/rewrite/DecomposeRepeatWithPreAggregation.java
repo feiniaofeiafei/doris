@@ -200,6 +200,12 @@ public class DecomposeRepeatWithPreAggregation extends DefaultPlanRewriter<Disti
         for (Expression key : groupBy) {
             preOutputs.add((NamedExpression) key);
         }
+        // Repeat nulls out absent grouping keys. Keep its normalized nullable slots rather
+        // than the pre-aggregate's input slots, or downstream aggregate key layouts disagree.
+        List<NamedExpression> repeatOutputs = new ArrayList<>();
+        for (Expression key : repeat.getGroupingSets().get(maxGroupIndex)) {
+            repeatOutputs.add((NamedExpression) key);
+        }
         Map<Expression, Expression> replacements = new HashMap<>();
         for (AggregateFunction function : aggregate.getAggregateFunctions()) {
             AggregateFunction nested = (AggregateFunction) ExpressionUtils.replace(function, inputSlots);
@@ -209,12 +215,12 @@ public class DecomposeRepeatWithPreAggregation extends DefaultPlanRewriter<Disti
             }
             Alias state = new Alias(new CombineCombinator(nested.children(), nested));
             preOutputs.add(state);
+            repeatOutputs.add(state.toSlot());
             replacements.put(function, new MergeCombinator(ImmutableList.of(state.toSlot()), nested));
         }
         LogicalAggregate<Plan> preAggregate = new LogicalAggregate<>(groupBy, preOutputs, repeat.child());
         preAggregate = preAggregate.withPartitionExpressions(
                 choosePreAggShuffleKeyPartitionExprs(repeat, maxGroupIndex, groupBy, connectContext));
-        List<NamedExpression> repeatOutputs = new ArrayList<>(preAggregate.getOutput());
         repeatOutputs.addAll(repeat.getGroupingScalarFunctionAlias());
         LogicalRepeat<Plan> newRepeat = repeat.withAggOutput(repeatOutputs)
                 .withChildren(ImmutableList.of(preAggregate));

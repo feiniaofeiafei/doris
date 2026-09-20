@@ -157,6 +157,29 @@ public class DecomposeRepeatWithPreAggregationTest extends TestWithFeService imp
     }
 
     @Test
+    void aggStatePreservesNullableGroupingOutputs() throws Exception {
+        createTable("create table decompose_repeat_with_preagg.nonnull_keys ("
+                + "a varchar(20) not null, b int not null, c int not null, d int not null) "
+                + "distributed by hash(a) buckets 1 properties('replication_num'='1')");
+        connectContext.getSessionVariable().enableDecomposeRepeatWithAggState = true;
+        try {
+            Plan plan = PlanChecker.from(connectContext)
+                    .analyze("select a,b,c,avg(d) from nonnull_keys group by rollup(a,b,c)")
+                    .rewrite().getPlan();
+            LogicalRepeat<?> repeat = (LogicalRepeat<?>) plan.collectFirst(
+                    node -> node instanceof LogicalRepeat).get();
+            LogicalAggregate<?> preAggregate = (LogicalAggregate<?>) repeat.child();
+            for (Expression key : preAggregate.getGroupByExpressions()) {
+                Assertions.assertFalse(key.nullable(), key.toSql());
+                Slot repeatedKey = repeat.getOutput().stream().filter(key::equals).findFirst().get();
+                Assertions.assertTrue(repeatedKey.nullable(), repeatedKey.toSql());
+            }
+        } finally {
+            connectContext.getSessionVariable().enableDecomposeRepeatWithAggState = false;
+        }
+    }
+
+    @Test
     void rewriteRollupSumShouldGenerateCteAndUnion() {
         String sql = "select a,b,c,sum(d) from t1 group by rollup(a,b,c);";
         PlanChecker.from(connectContext)
