@@ -39,6 +39,13 @@ suite("decompose_repeat_agg_state") {
         """select a,b,c,avg(v),count(*),grouping_id(a,b,c)
            from decompose_repeat_agg_state
            group by grouping sets ((a),(a,b,c),(a,b),(),())""",
+        """select a,b,c,avg(v),count(*),grouping(c),grouping_id(a,b,c)
+           from decompose_repeat_agg_state
+           group by grouping sets ((a,b,c),(a,b,c),(a,b),(),())""",
+        """select avg(v),avg(v)+1,count(*),count(v)
+           from decompose_repeat_agg_state group by rollup(a,b,c)""",
+        """select c,a,b,grouping(c),avg(v),grouping_id(c,a,b),count(*)
+           from decompose_repeat_agg_state group by grouping sets ((a),(a,b,c),(a,b),())""",
         """select a+1,b,c,avg(v+1),avg(v)+sum(v)
            from decompose_repeat_agg_state group by rollup(a+1,b,c) having count(*)>1""",
         """select a,b,c,avg(v),count(*),count(v),sum0(v)
@@ -63,5 +70,6 @@ suite("decompose_repeat_agg_state") {
         sql "select a,b,c,avg(v) from decompose_repeat_agg_state group by rollup(a,b,c)"
         contains "avg_combine"
         contains "avg_merge"
+        contains "avg_finalize"
     }
 }

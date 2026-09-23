@@ -3600,7 +3600,7 @@ public class SessionVariable implements Serializable, Writable {
     public boolean useV3StorageFormat = false;
 
     @VarAttrDef.VarAttr(name = "enable_decompose_repeat_with_agg_state", needForward = true,
-            description = "Use combine/merge pre-aggregation for grouping sets without CTE splitting.")
+            description = "Use CTE-shared combine states with merge/finalize for grouping sets.")
     public boolean enableDecomposeRepeatWithAggState = false;
 
     @VarAttrDef.VarAttr(name = DECOMPOSE_REPEAT_SHUFFLE_INDEX_IN_MAX_GROUP)
