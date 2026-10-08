@@ -79,7 +79,7 @@ import java.util.TreeMap;
 /**
  * Pre-aggregate the grouping set that contains all other grouping sets and share it through a CTE.
  * SUM, SUM0, MIN, MAX, ANY_VALUE and COUNT use their final results for further aggregation;
- * COUNT results are rolled up by SUM. When enable_decompose_repeat_with_agg_state is enabled,
+ * COUNT results are rolled up by SUM;
  * other eligible built-in aggregates use combine/merge/finalize to preserve their intermediate states.
  * Both kinds of aggregate can share the same producer, Repeat and union.
  *
@@ -138,14 +138,11 @@ public class DecomposeRepeatWithPreAggregation extends DefaultPlanRewriter<Disti
     @Override
     public Plan visitLogicalAggregate(LogicalAggregate<? extends Plan> aggregate, DistinctSelectorContext ctx) {
         aggregate = visitChildren(this, aggregate, ctx);
-        int maxGroupIndex = canOptimize(aggregate, ctx.cascadesContext.getConnectContext());
+        int maxGroupIndex = canOptimize(aggregate);
         if (maxGroupIndex < 0) {
             return aggregate;
         }
-        Map<AggregateFunction, CombineCombinator> combiners = new HashMap<>();
-        if (ctx.cascadesContext.getConnectContext().getSessionVariable().enableDecomposeRepeatWithAggState) {
-            combiners = constructCombiners(aggregate);
-        }
+        Map<AggregateFunction, CombineCombinator> combiners = constructCombiners(aggregate);
         Map<Slot, Slot> preToProducerSlotMap = new HashMap<>();
         LogicalCTEProducer<LogicalAggregate<Plan>> producer = constructProducer(aggregate, maxGroupIndex, ctx,
                 preToProducerSlotMap, ctx.cascadesContext.getConnectContext(), combiners);
@@ -445,14 +442,14 @@ public class DecomposeRepeatWithPreAggregation extends DefaultPlanRewriter<Disti
      * Determine if optimization is possible; if so, return the index of the largest group.
      * The optimization requires:
      * 1. The aggregate's child must be a LogicalRepeat
-     * 2. All aggregate functions must be non-DISTINCT and support result rollup or the enabled AGG_STATE path.
+     * 2. All aggregate functions must be non-DISTINCT and support result rollup or the AGG_STATE path.
      * 3. More than 3 grouping sets
      * 4. There exists a grouping set that contains all other grouping sets
      * @param aggregate the aggregate plan to check
      * @return value -1 means can not be optimized, values other than -1
      *      represent the index of the set that contains all other sets
      */
-    private int canOptimize(LogicalAggregate<? extends Plan> aggregate, ConnectContext connectContext) {
+    private int canOptimize(LogicalAggregate<? extends Plan> aggregate) {
         Plan aggChild = aggregate.child();
         if (!(aggChild instanceof LogicalRepeat)) {
             return -1;
@@ -461,8 +458,7 @@ public class DecomposeRepeatWithPreAggregation extends DefaultPlanRewriter<Disti
         Set<AggregateFunction> aggFunctions = aggregate.getAggregateFunctions();
         for (AggregateFunction aggFunction : aggFunctions) {
             if (!RESULT_ROLLUP_FUNCTIONS.contains(aggFunction.getClass())
-                    && !(connectContext.getSessionVariable().enableDecomposeRepeatWithAggState
-                    && supportsAggState(aggFunction))) {
+                    && !supportsAggState(aggFunction)) {
                 return -1;
             }
             if (aggFunction.isDistinct()) {

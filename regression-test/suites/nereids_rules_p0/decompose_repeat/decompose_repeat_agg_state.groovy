@@ -58,11 +58,14 @@ suite("decompose_repeat_agg_state") {
     // Exercise state rollup beyond AVG, including multi-argument functions and complex inputs.
     // Round statistical results because regrouping changes floating-point addition order.
     for (grouping in ["rollup(a,b,c)", "cube(a,b,c)",
-                      "grouping sets ((a),(a,b,c),(a,b),(),())"]) {
+                      "grouping sets ((a),(a,b,c),(a,b),(),())",
+                      "grouping sets ((a,b,c),(a,b,c),(a,b),(),())"]) {
         for (predicate in ["true", "a=2", "n<0"]) {
             queries.add("""select a,b,c,sum(v),count(*),min(v),max(v),
-                          round(avg(v),6),round(stddev_samp(v),6),round(var_samp(v),6),
-                          round(covar_pop(v,n),6),round(avg_weighted(v,n),6),
+                          round(avg(v),6),round(stddev_samp(v),6),round(stddev_pop(v),6),
+                          round(var_samp(v),6),round(var_pop(v),6),
+                          round(covar_pop(v,n),6),round(covar_samp(v,n),6),
+                          round(avg_weighted(v,n),6),
                           round(percentile(cast(v as double),0.5),6),
                           ndv(v),bitmap_union_count(to_bitmap(n)),
                           grouping_id(a,b,c)
@@ -73,11 +76,7 @@ suite("decompose_repeat_agg_state") {
         sql "set disable_nereids_rules='DECOMPOSE_REPEAT'"
         def baseline = order_sql(query)
         sql "set disable_nereids_rules=''"
-        sql "set enable_decompose_repeat_with_agg_state=false"
-        def cteResult = order_sql(query)
-        sql "set enable_decompose_repeat_with_agg_state=true"
         def stateResult = order_sql(query)
-        assertEquals(baseline, cteResult)
         assertEquals(baseline, stateResult)
     }
     explain {
