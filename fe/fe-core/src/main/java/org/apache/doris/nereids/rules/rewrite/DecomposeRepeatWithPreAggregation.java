@@ -77,25 +77,29 @@ import java.util.Set;
 import java.util.TreeMap;
 
 /**
- * Pre-aggregate the maximum grouping set once and share it through a CTE.
- * With enable_decompose_repeat_with_agg_state, use serialized states so aggregates such as AVG
- * can be rolled up without losing information. The maximum grouping set only needs a scalar
- * finalize, while the remaining grouping sets merge the shared states:
+ * Pre-aggregate the grouping set that contains all other grouping sets and share it through a CTE.
+ * SUM, SUM0, MIN, MAX, ANY_VALUE and COUNT use their final results for further aggregation;
+ * COUNT results are rolled up by SUM. When enable_decompose_repeat_with_agg_state is enabled,
+ * other eligible built-in aggregates use combine/merge/finalize to preserve their intermediate states.
+ * Both kinds of aggregate can share the same producer, Repeat and union.
+ *
+ * For example, SUM(d), COUNT(d) and AVG(d) over ROLLUP(a,b,c) are rewritten as:
  *
  * LogicalCTEAnchor
  *   +--LogicalCTEProducer(cte)
- *     +--LogicalAggregate(gby: a,b,c; aggFunc: avg_combine(d) as x)
+ *     +--LogicalAggregate(gby: a,b,c; aggFunc: sum(d) as s, count(d) as n, avg_combine(d) as x)
  *   +--LogicalUnionAll
- *     +--LogicalProject(a,b, null as c, avg)
- *       +--LogicalAggregate(gby:a,b,grouping_id; aggFunc: avg_merge(x) as avg)
+ *     +--LogicalProject(a,b, null as c, sum_result, count_result, avg_result, grouping_id)
+ *       +--LogicalAggregate(gby: a,b,grouping_id;
+ *             aggFunc: sum(s) as sum_result, sum(n) as count_result, avg_merge(x) as avg_result)
  *         +--LogicalRepeat(grouping sets: (a,b),(a),())
  *           +--LogicalCTEConsumer(aggregateConsumer)
- *     +--LogicalProject(a,b,c, avg_finalize(x), grouping_id constant)
+ *     +--LogicalProject(a,b,c, s, n, avg_finalize(x), grouping_id constant)
  *       +--LogicalCTEConsumer(directConsumer)
  *
- * Aggregates whose results can be rolled up keep the original path even when AGG_STATE is enabled,
- * with COUNT rolled up by SUM. Their direct consumer slots already contain the final results.
- * Both paths can share the same producer, Repeat and union.
+ * The direct branch needs no aggregation: it passes through ordinary results and finalizes states
+ * introduced by this rule. Existing aggregate combinators (such as avg_combine) are not eligible;
+ * if any original aggregate function is unsupported or DISTINCT, the entire aggregate is left unchanged.
  */
 public class DecomposeRepeatWithPreAggregation extends DefaultPlanRewriter<DistinctSelectorContext>
         implements CustomRewriter {
@@ -214,8 +218,10 @@ public class DecomposeRepeatWithPreAggregation extends DefaultPlanRewriter<Disti
 
     /**
      * Get the direct child plan for the union operation.
-     * If the output contains internal grouping id or grouping function slots, wrap the consumer with a project
-     * that adds the values of the internal grouping id and grouping scalar functions for the maximum grouping set.
+     * Project ordinary result slots unchanged, finalize states introduced by this rule, and add
+     * the internal grouping id and grouping scalar function values for the maximum grouping set.
+     * canOptimize rejects original aggregate combinators, so every CombineCombinator in the producer
+     * was introduced by constructCombiners and must be finalized here.
      *
      * @param directConsumer the CTE consumer for the direct path
      * @param producerOutputs producer expressions identifying serialized states to finalize
@@ -287,13 +293,15 @@ public class DecomposeRepeatWithPreAggregation extends DefaultPlanRewriter<Disti
     }
 
     /**
-     * Construct a LogicalAggregate for the decomposed repeat.
+     * Construct a LogicalAggregate for the remaining grouping sets. Merge generated states,
+     * roll up COUNT results with SUM, and apply other result-rollup functions to their result slots.
      *
      * @param aggregate the original aggregate plan
      * @param originToConsumerMap the map from original slots to consumer slots
      * @param newRepeat the new LogicalRepeat plan with reduced grouping sets
      * @param groupingFunctionSlots the list of new grouping function slots
      * @param aggFuncToSlot output parameter: map from original aggregate functions to their slots in the new aggregate
+     * @param combiners original aggregate functions mapped to the state combiners introduced by this rule
      * @return a LogicalAggregate for the decomposed repeat
      */
     private LogicalAggregate<Plan> constructAgg(LogicalAggregate<? extends Plan> aggregate,
@@ -437,7 +445,7 @@ public class DecomposeRepeatWithPreAggregation extends DefaultPlanRewriter<Disti
      * Determine if optimization is possible; if so, return the index of the largest group.
      * The optimization requires:
      * 1. The aggregate's child must be a LogicalRepeat
-     * 2. All aggregate functions must support result rollup or the enabled AGG_STATE path.
+     * 2. All aggregate functions must be non-DISTINCT and support result rollup or the enabled AGG_STATE path.
      * 3. More than 3 grouping sets
      * 4. There exists a grouping set that contains all other grouping sets
      * @param aggregate the aggregate plan to check
@@ -473,8 +481,11 @@ public class DecomposeRepeatWithPreAggregation extends DefaultPlanRewriter<Disti
     }
 
     private boolean supportsAggState(AggregateFunction function) {
-        // State combinators only represent built-ins, not UDAFs or nested combinators. Reuse the
-        // built-in registry and opt-out marker rather than maintaining another function allowlist.
+        // Match the original function's exact class, not a combinator's nested function. The built-in
+        // registry excludes UDAFs and existing aggregate combinators such as xxx_combine/merge/union.
+        // Rejecting those combinators also ensures that getDirectChild only finalizes states introduced
+        // by this rule. The remaining checks require state support, arguments without ORDER BY, and
+        // two-phase aggregation support.
         return BuiltinAggregateFunctions.INSTANCE.aggregateFunctions.stream()
                 .anyMatch(builtin -> builtin.functionClass.equals(function.getClass()))
                 && !(function instanceof NotSupportAggState)
