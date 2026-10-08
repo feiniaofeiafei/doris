@@ -25,6 +25,7 @@ import org.apache.doris.nereids.trees.expressions.NamedExpression;
 import org.apache.doris.nereids.trees.expressions.Slot;
 import org.apache.doris.nereids.trees.expressions.SlotReference;
 import org.apache.doris.nereids.trees.expressions.functions.agg.AggregateFunction;
+import org.apache.doris.nereids.trees.expressions.functions.agg.Count;
 import org.apache.doris.nereids.trees.expressions.functions.agg.Max;
 import org.apache.doris.nereids.trees.expressions.functions.agg.Sum;
 import org.apache.doris.nereids.trees.expressions.functions.combinator.CombineCombinator;
@@ -107,7 +108,11 @@ public class DecomposeRepeatWithPreAggregationTest extends TestWithFeService imp
                 String shape = plan.treeString();
                 Assertions.assertTrue(shape.contains("avg_combine"), shape);
                 Assertions.assertTrue(shape.contains("avg_merge"), shape);
-                Assertions.assertTrue(shape.contains("count_combine"), shape);
+                for (String function : ImmutableList.of("sum", "sum0", "count", "min", "max", "any_value")) {
+                    Assertions.assertFalse(shape.contains(function + "_combine"), shape);
+                    Assertions.assertFalse(shape.contains(function + "_merge"), shape);
+                    Assertions.assertFalse(shape.contains(function + "_finalize"), shape);
+                }
                 Assertions.assertTrue(shape.contains("avg_finalize"), shape);
                 Assertions.assertTrue(plan.anyMatch(node -> node instanceof LogicalCTEAnchor), shape);
                 LogicalUnion union = (LogicalUnion) plan.collectFirst(node -> node instanceof LogicalUnion).get();
@@ -174,7 +179,7 @@ public class DecomposeRepeatWithPreAggregationTest extends TestWithFeService imp
     }
 
     @Test
-    void aggStateSharesCountAndAvgStatesAcrossBranches() {
+    void aggStateSharesAvgStateAndCountResultsAcrossBranches() {
         connectContext.getSessionVariable().enableDecomposeRepeatWithAggState = true;
         try {
             Plan plan = PlanChecker.from(connectContext)
@@ -185,12 +190,57 @@ public class DecomposeRepeatWithPreAggregationTest extends TestWithFeService imp
             LogicalAggregate<?> preAggregate = (LogicalAggregate<?>) producer.collectFirst(
                     node -> node instanceof LogicalAggregate).get();
             Assertions.assertEquals(3, preAggregate.getAggregateFunctions().size());
-            for (AggregateFunction function : preAggregate.getAggregateFunctions()) {
-                CombineCombinator combine = Assertions.assertInstanceOf(CombineCombinator.class, function);
-                Assertions.assertFalse(combine.children().isEmpty());
+            Assertions.assertEquals(1, preAggregate.getAggregateFunctions().stream()
+                    .filter(CombineCombinator.class::isInstance).count());
+            Assertions.assertEquals(2, preAggregate.getAggregateFunctions().stream()
+                    .filter(Count.class::isInstance)
+                    .count());
+            Assertions.assertFalse(plan.treeString().contains("count_finalize"));
+            Assertions.assertFalse(plan.treeString().contains("count_merge"));
+        } finally {
+            connectContext.getSessionVariable().enableDecomposeRepeatWithAggState = false;
+        }
+    }
+
+    @Test
+    void aggStateSupportsOtherMergeableBuiltins() {
+        connectContext.getSessionVariable().enableDecomposeRepeatWithAggState = true;
+        try {
+            for (String expression : ImmutableList.of("stddev_samp(d)", "var_samp(d)", "ndv(d)",
+                    "covar_pop(d,a)", "bitmap_union_count(to_bitmap(d))", "group_concat(cast(d as string))",
+                    "percentile(d,0.5)", "avg_weighted(d,a)")) {
+                String sql = "select a,b,c,sum(d),count(*)," + expression + " from t1 group by rollup(a,b,c)";
+                PlanChecker.from(connectContext).checkExplain(sql, planner -> {
+                    String shape = planner.getOptimizedPlan().treeString();
+                    Assertions.assertTrue(shape.contains("_combine"), shape);
+                    Assertions.assertTrue(shape.contains("_merge"), shape);
+                    Assertions.assertTrue(shape.contains("_finalize"), shape);
+                    Assertions.assertFalse(shape.contains("sum_combine"), shape);
+                    Assertions.assertFalse(shape.matches("(?s).*\\bcount_combine\\(.*"), shape);
+                });
+                connectContext.getSessionVariable().enableDecomposeRepeatWithAggState = false;
+                String original = PlanChecker.from(connectContext).analyze(sql).rewrite().getPlan().treeString();
+                Assertions.assertFalse(original.contains("_combine"), original);
+                connectContext.getSessionVariable().enableDecomposeRepeatWithAggState = true;
             }
-            Assertions.assertTrue(plan.treeString().contains("count_finalize"));
-            Assertions.assertTrue(plan.treeString().contains("count_merge"));
+        } finally {
+            connectContext.getSessionVariable().enableDecomposeRepeatWithAggState = false;
+        }
+    }
+
+    @Test
+    void aggStateKeepsResultRollupWithoutStates() {
+        connectContext.getSessionVariable().enableDecomposeRepeatWithAggState = true;
+        try {
+            Plan plan = PlanChecker.from(connectContext)
+                    .analyze("select sum(d),sum0(d),count(*),count(d),min(d),max(d),any_value(d) "
+                            + "from t1 group by rollup(a,b,c)")
+                    .rewrite().getPlan();
+            String shape = plan.treeString();
+            Assertions.assertTrue(plan.anyMatch(node -> node instanceof LogicalCTEAnchor), shape);
+            Assertions.assertFalse(shape.contains("_combine"), shape);
+            Assertions.assertFalse(shape.contains("_merge"), shape);
+            Assertions.assertFalse(shape.contains("_finalize"), shape);
         } finally {
             connectContext.getSessionVariable().enableDecomposeRepeatWithAggState = false;
         }
@@ -204,7 +254,9 @@ public class DecomposeRepeatWithPreAggregationTest extends TestWithFeService imp
                     "select avg(distinct d) from t1 group by rollup(a,b,c)",
                     "select avg(d) from t1 group by rollup(a,b)",
                     "select avg(d) from t1 group by grouping sets ((a,b),(b,c),(a,c),())",
-                    "select group_concat(cast(d as string)) from t1 group by rollup(a,b,c)")) {
+                    "select group_concat(cast(d as string) order by d) from t1 group by rollup(a,b,c)",
+                    "select orthogonal_bitmap_union_count(to_bitmap(d)) from t1 group by rollup(a,b,c)",
+                    "select sum_merge(sum_state(d)) from t1 group by rollup(a,b,c)")) {
                 String shape = PlanChecker.from(connectContext).analyze(sql).rewrite().getPlan().treeString();
                 Assertions.assertFalse(shape.contains("_combine"), shape);
             }

@@ -17,6 +17,7 @@
 
 package org.apache.doris.nereids.rules.rewrite;
 
+import org.apache.doris.catalog.BuiltinAggregateFunctions;
 import org.apache.doris.nereids.jobs.JobContext;
 import org.apache.doris.nereids.properties.ShuffleKeyPruneUtils;
 import org.apache.doris.nereids.rules.rewrite.DistinctAggStrategySelector.DistinctSelectorContext;
@@ -27,15 +28,17 @@ import org.apache.doris.nereids.trees.expressions.Alias;
 import org.apache.doris.nereids.trees.expressions.ExprId;
 import org.apache.doris.nereids.trees.expressions.Expression;
 import org.apache.doris.nereids.trees.expressions.NamedExpression;
+import org.apache.doris.nereids.trees.expressions.OrderExpression;
 import org.apache.doris.nereids.trees.expressions.Slot;
 import org.apache.doris.nereids.trees.expressions.SlotReference;
 import org.apache.doris.nereids.trees.expressions.StatementScopeIdGenerator;
 import org.apache.doris.nereids.trees.expressions.functions.agg.AggregateFunction;
+import org.apache.doris.nereids.trees.expressions.functions.agg.AggregatePhase;
 import org.apache.doris.nereids.trees.expressions.functions.agg.AnyValue;
-import org.apache.doris.nereids.trees.expressions.functions.agg.Avg;
 import org.apache.doris.nereids.trees.expressions.functions.agg.Count;
 import org.apache.doris.nereids.trees.expressions.functions.agg.Max;
 import org.apache.doris.nereids.trees.expressions.functions.agg.Min;
+import org.apache.doris.nereids.trees.expressions.functions.agg.NotSupportAggState;
 import org.apache.doris.nereids.trees.expressions.functions.agg.Sum;
 import org.apache.doris.nereids.trees.expressions.functions.agg.Sum0;
 import org.apache.doris.nereids.trees.expressions.functions.combinator.CombineCombinator;
@@ -90,13 +93,14 @@ import java.util.TreeMap;
  *     +--LogicalProject(a,b,c, avg_finalize(x), grouping_id constant)
  *       +--LogicalCTEConsumer(directConsumer)
  *
- * Without AGG_STATE, use the original aggregates in the producer and roll up their results,
- * with COUNT rolled up by SUM. The direct consumer already contains the final results.
+ * Aggregates whose results can be rolled up keep the original path even when AGG_STATE is enabled,
+ * with COUNT rolled up by SUM. Their direct consumer slots already contain the final results.
+ * Both paths can share the same producer, Repeat and union.
  */
 public class DecomposeRepeatWithPreAggregation extends DefaultPlanRewriter<DistinctSelectorContext>
         implements CustomRewriter {
     public static final DecomposeRepeatWithPreAggregation INSTANCE = new DecomposeRepeatWithPreAggregation();
-    private static final Set<Class<? extends AggregateFunction>> SUPPORT_AGG_FUNCTIONS =
+    private static final Set<Class<? extends AggregateFunction>> RESULT_ROLLUP_FUNCTIONS =
             ImmutableSet.of(Sum.class, Sum0.class, Min.class, Max.class, AnyValue.class, Count.class);
     private static final int DECOMPOSE_REPEAT_THRESHOLD = 3;
     private static final int BALANCE_MULTIPLIER = 128;
@@ -199,11 +203,10 @@ public class DecomposeRepeatWithPreAggregation extends DefaultPlanRewriter<Disti
         }
         Map<AggregateFunction, CombineCombinator> combiners = new HashMap<>();
         for (AggregateFunction function : aggregate.getAggregateFunctions()) {
-            AggregateFunction nested = (AggregateFunction) ExpressionUtils.replace(function, inputSlots);
-            // AGG_STATE requires at least one argument. COUNT(*) and COUNT(1) count the same rows.
-            if (nested instanceof Count && nested.children().isEmpty()) {
-                nested = new Count(new BigIntLiteral(1));
+            if (RESULT_ROLLUP_FUNCTIONS.contains(function.getClass())) {
+                continue;
             }
+            AggregateFunction nested = (AggregateFunction) ExpressionUtils.replace(function, inputSlots);
             combiners.put(function, new CombineCombinator(nested.children(), nested));
         }
         return combiners;
@@ -434,7 +437,7 @@ public class DecomposeRepeatWithPreAggregation extends DefaultPlanRewriter<Disti
      * Determine if optimization is possible; if so, return the index of the largest group.
      * The optimization requires:
      * 1. The aggregate's child must be a LogicalRepeat
-     * 2. All aggregate functions must be supported (AVG additionally supports the AGG_STATE path).
+     * 2. All aggregate functions must support result rollup or the enabled AGG_STATE path.
      * 3. More than 3 grouping sets
      * 4. There exists a grouping set that contains all other grouping sets
      * @param aggregate the aggregate plan to check
@@ -449,9 +452,9 @@ public class DecomposeRepeatWithPreAggregation extends DefaultPlanRewriter<Disti
         // check agg func
         Set<AggregateFunction> aggFunctions = aggregate.getAggregateFunctions();
         for (AggregateFunction aggFunction : aggFunctions) {
-            if (!SUPPORT_AGG_FUNCTIONS.contains(aggFunction.getClass())
+            if (!RESULT_ROLLUP_FUNCTIONS.contains(aggFunction.getClass())
                     && !(connectContext.getSessionVariable().enableDecomposeRepeatWithAggState
-                    && aggFunction instanceof Avg)) {
+                    && supportsAggState(aggFunction))) {
                 return -1;
             }
             if (aggFunction.isDistinct()) {
@@ -467,6 +470,17 @@ public class DecomposeRepeatWithPreAggregation extends DefaultPlanRewriter<Disti
             return -1;
         }
         return findMaxGroupingSetIndex(groupingSets);
+    }
+
+    private boolean supportsAggState(AggregateFunction function) {
+        // State combinators only represent built-ins, not UDAFs or nested combinators. Reuse the
+        // built-in registry and opt-out marker rather than maintaining another function allowlist.
+        return BuiltinAggregateFunctions.INSTANCE.aggregateFunctions.stream()
+                .anyMatch(builtin -> builtin.functionClass.equals(function.getClass()))
+                && !(function instanceof NotSupportAggState)
+                && !function.children().isEmpty()
+                && function.children().stream().noneMatch(OrderExpression.class::isInstance)
+                && function.supportAggregatePhase(AggregatePhase.TWO);
     }
 
     /**

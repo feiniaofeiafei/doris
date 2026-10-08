@@ -55,6 +55,20 @@ suite("decompose_repeat_agg_state") {
         """select a,b,c,sum(v),count(*),count(v),min(v),max(v),grouping_id(a,b,c)
            from decompose_repeat_agg_state group by rollup(a,b,c)"""
     ]
+    // Exercise state rollup beyond AVG, including multi-argument functions and complex inputs.
+    // Round statistical results because regrouping changes floating-point addition order.
+    for (grouping in ["rollup(a,b,c)", "cube(a,b,c)",
+                      "grouping sets ((a),(a,b,c),(a,b),(),())"]) {
+        for (predicate in ["true", "a=2", "n<0"]) {
+            queries.add("""select a,b,c,sum(v),count(*),min(v),max(v),
+                          round(avg(v),6),round(stddev_samp(v),6),round(var_samp(v),6),
+                          round(covar_pop(v,n),6),round(avg_weighted(v,n),6),
+                          round(percentile(cast(v as double),0.5),6),
+                          ndv(v),bitmap_union_count(to_bitmap(n)),
+                          grouping_id(a,b,c)
+                   from decompose_repeat_agg_state where ${predicate} group by ${grouping}""")
+        }
+    }
     for (query in queries) {
         sql "set disable_nereids_rules='DECOMPOSE_REPEAT'"
         def baseline = order_sql(query)
@@ -71,5 +85,15 @@ suite("decompose_repeat_agg_state") {
         contains "avg_combine"
         contains "avg_merge"
         contains "avg_finalize"
+    }
+    explain {
+        sql """select a,b,c,sum(v),count(*),avg(v),stddev_samp(v),ndv(v)
+               from decompose_repeat_agg_state group by rollup(a,b,c)"""
+        contains "stddev_samp_combine"
+        contains "ndv_combine"
+        notContains "sum_combine"
+        notContains "sum_finalize"
+        notContains "count_combine"
+        notContains "count_finalize"
     }
 }
