@@ -36,6 +36,8 @@ import java.util.Optional;
 public class UnboundSlot extends Slot implements Unbound, PropagateNullable {
 
     private final List<String> nameParts;
+    // The source occurrence belongs to this unbound reference, never to a bound or synthesized slot.
+    private final Optional<Pair<Integer, Integer>> indexInSqlString;
 
     public UnboundSlot(String... nameParts) {
         this(ImmutableList.copyOf(nameParts), Optional.empty());
@@ -46,13 +48,16 @@ public class UnboundSlot extends Slot implements Unbound, PropagateNullable {
     }
 
     public UnboundSlot(List<String> nameParts, Optional<Pair<Integer, Integer>> indexInSqlString) {
-        super(indexInSqlString);
         this.nameParts = ImmutableList.copyOf(Objects.requireNonNull(nameParts, "nameParts can not be null"));
+        this.indexInSqlString = indexInSqlString;
     }
 
-    @Override
-    public Slot withIndexInSql(Pair<Integer, Integer> index) {
+    public UnboundSlot withIndexInSql(Pair<Integer, Integer> index) {
         return new UnboundSlot(nameParts, Optional.ofNullable(index));
+    }
+
+    public Optional<Pair<Integer, Integer>> getIndexInSqlString() {
+        return indexInSqlString;
     }
 
     public List<String> getNameParts() {

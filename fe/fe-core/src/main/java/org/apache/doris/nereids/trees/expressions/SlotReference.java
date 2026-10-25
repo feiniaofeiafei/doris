@@ -20,7 +20,6 @@ package org.apache.doris.nereids.trees.expressions;
 import org.apache.doris.analysis.ColumnAccessPath;
 import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.TableIf;
-import org.apache.doris.common.Pair;
 import org.apache.doris.nereids.exceptions.UnboundException;
 import org.apache.doris.nereids.trees.expressions.visitor.ExpressionVisitor;
 import org.apache.doris.nereids.types.DataType;
@@ -94,15 +93,15 @@ public class SlotReference extends Slot {
             List<String> subPath) {
         this(exprId, () -> name, dataType, nullable, qualifier,
                 originalTable, originalColumn, oneLevelTable, oneLevelColumn,
-                subPath, Optional.empty());
+                subPath);
     }
 
     public SlotReference(ExprId exprId, Supplier<String> name, DataType dataType, boolean nullable,
             List<String> qualifier, @Nullable TableIf originalTable, @Nullable Column originalColumn,
             @Nullable TableIf oneLevelTable, Column oneLevelColumn,
-            List<String> subPath, Optional<Pair<Integer, Integer>> indexInSql) {
+            List<String> subPath) {
         this(exprId, name, dataType, nullable, qualifier, originalTable, originalColumn, oneLevelTable,
-                oneLevelColumn, subPath, indexInSql, Optional.empty(), Optional.empty(),
+                oneLevelColumn, subPath, Optional.empty(), Optional.empty(),
                 Optional.empty(), Optional.empty());
     }
 
@@ -120,11 +119,10 @@ public class SlotReference extends Slot {
     public SlotReference(ExprId exprId, Supplier<String> name, DataType dataType, boolean nullable,
             List<String> qualifier, @Nullable TableIf originalTable, @Nullable Column originalColumn,
             @Nullable TableIf oneLevelTable, Column oneLevelColumn,
-            List<String> subPath, Optional<Pair<Integer, Integer>> indexInSql,
+            List<String> subPath,
             Optional<List<ColumnAccessPath>> allAccessPaths, Optional<List<ColumnAccessPath>> predicateAccessPaths,
             Optional<List<ColumnAccessPath>> displayAllAccessPaths,
             Optional<List<ColumnAccessPath>> displayPredicateAccessPaths) {
-        super(indexInSql);
         this.exprId = exprId;
         this.name = name;
         this.dataType = dataType;
@@ -281,7 +279,7 @@ public class SlotReference extends Slot {
         }
         return new SlotReference(exprId, name, dataType, nullable, qualifier,
                 originalTable, originalColumn, oneLevelTable, oneLevelColumn,
-                subPath, indexInSqlString);
+                subPath);
     }
 
     @Override
@@ -291,14 +289,14 @@ public class SlotReference extends Slot {
         }
         return new SlotReference(exprId, name, dataType, nullable, qualifier,
                 originalTable, originalColumn, oneLevelTable, oneLevelColumn,
-                subPath, indexInSqlString);
+                subPath);
     }
 
     @Override
     public SlotReference withQualifier(List<String> qualifier) {
         return new SlotReference(exprId, name, dataType, nullable, qualifier,
                 originalTable, originalColumn, oneLevelTable, oneLevelColumn,
-                subPath, indexInSqlString);
+                subPath);
     }
 
     @Override
@@ -308,40 +306,33 @@ public class SlotReference extends Slot {
         }
         return new SlotReference(exprId, () -> name, dataType, nullable, qualifier,
                 originalTable, originalColumn, oneLevelTable, oneLevelColumn,
-                subPath, indexInSqlString);
+                subPath);
     }
 
     @Override
     public SlotReference withExprId(ExprId exprId) {
         return new SlotReference(exprId, name, dataType, nullable, qualifier,
                 originalTable, originalColumn, oneLevelTable, oneLevelColumn,
-                subPath, indexInSqlString);
+                subPath);
     }
 
     public SlotReference withSubPath(List<String> subPath) {
         return new SlotReference(exprId, name, dataType, !subPath.isEmpty() || nullable, qualifier,
                 originalTable, originalColumn, oneLevelTable, oneLevelColumn,
-                subPath, indexInSqlString);
-    }
-
-    @Override
-    public Slot withIndexInSql(Pair<Integer, Integer> index) {
-        return new SlotReference(exprId, name, dataType, nullable, qualifier,
-                originalTable, originalColumn, oneLevelTable, oneLevelColumn,
-                subPath, Optional.ofNullable(index));
+                subPath);
     }
 
     public SlotReference withColumn(Column column) {
         return new SlotReference(exprId, name, dataType, nullable, qualifier,
                 originalTable, column, oneLevelTable, column,
-                subPath, indexInSqlString);
+                subPath);
     }
 
     @Override
     public Slot withOneLevelTableAndColumnAndQualifier(TableIf oneLevelTable, Column column, List<String> qualifier) {
         return new SlotReference(exprId, name, dataType, nullable, qualifier,
                 originalTable, originalColumn, oneLevelTable, column,
-                subPath, indexInSqlString);
+                subPath);
     }
 
     public boolean isVisible() {
@@ -368,7 +359,7 @@ public class SlotReference extends Slot {
             List<ColumnAccessPath> allAccessPaths, List<ColumnAccessPath> predicateAccessPaths) {
         return new SlotReference(exprId, name, dataType, nullable, qualifier,
                 originalTable, originalColumn, oneLevelTable, oneLevelColumn,
-                subPath, indexInSqlString, Optional.of(allAccessPaths), Optional.of(predicateAccessPaths),
+                subPath, Optional.of(allAccessPaths), Optional.of(predicateAccessPaths),
                 Optional.of(allAccessPaths), Optional.of(predicateAccessPaths));
     }
 
@@ -377,7 +368,7 @@ public class SlotReference extends Slot {
             List<ColumnAccessPath> displayAllAccessPaths, List<ColumnAccessPath> displayPredicateAccessPaths) {
         return new SlotReference(exprId, name, dataType, nullable, qualifier,
                 originalTable, originalColumn, oneLevelTable, oneLevelColumn,
-                subPath, indexInSqlString, Optional.of(allAccessPaths), Optional.of(predicateAccessPaths),
+                subPath, Optional.of(allAccessPaths), Optional.of(predicateAccessPaths),
                 Optional.of(displayAllAccessPaths), Optional.of(displayPredicateAccessPaths));
     }
 

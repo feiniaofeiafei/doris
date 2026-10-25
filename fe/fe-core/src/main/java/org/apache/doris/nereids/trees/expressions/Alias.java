@@ -29,7 +29,6 @@ import com.google.common.collect.ImmutableList;
 
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.function.Supplier;
 
 /**
@@ -100,8 +99,7 @@ public class Alias extends NamedExpression implements UnaryExpression {
                 slotReference != null ? slotReference.getOriginalColumn().orElse(null) : null,
                 slotReference != null ? ((SlotReference) child()).getOneLevelTable().orElse(null) : null,
                 slotReference != null ? slotReference.getOneLevelColumn().orElse(null) : null,
-                slotReference != null ? slotReference.getSubPath() : ImmutableList.of(), Optional.empty()
-        );
+                slotReference != null ? slotReference.getSubPath() : ImmutableList.of());
     }
 
     @Override

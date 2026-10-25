@@ -802,7 +802,7 @@ public class BindRelation extends OneAnalysisRuleFactory {
         // for create view stmt replace tableName to ctl.db.tableName
         unboundRelation.getIndexInSqlString().ifPresent(pair -> {
             StatementContext statementContext = cascadesContext.getStatementContext();
-            statementContext.addIndexInSqlToString(pair,
+            statementContext.getViewSqlRewriter().replace(pair,
                     Utils.qualifiedNameWithBackquote(qualifiedTableName));
         });
 

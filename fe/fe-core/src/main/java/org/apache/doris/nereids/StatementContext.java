@@ -66,6 +66,7 @@ import org.apache.doris.nereids.trees.plans.logical.LogicalCTEConsumer;
 import org.apache.doris.nereids.trees.plans.logical.LogicalCTEProducer;
 import org.apache.doris.nereids.trees.plans.logical.LogicalPlan;
 import org.apache.doris.nereids.util.RelationUtil;
+import org.apache.doris.nereids.util.ViewSqlRewriter;
 import org.apache.doris.planner.ScanNode;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.qe.GlobalVariable;
@@ -292,12 +293,9 @@ public class StatementContext implements Closeable {
     // the columns prevents bind-time expressions and the later sink fence from naming different generations.
     private final Map<Long, String> connectorWriteMetadataIdentities = new HashMap<>();
 
-    // for create view support in nereids
-    // key is the start and end position of the sql substring that needs to be
-    // replaced,
-    // and value is the new string used for replacement.
-    private final TreeMap<Pair<Integer, Integer>, String> indexInSqlToString = new TreeMap<>(
-            new Pair.PairComparator<>());
+    // The CREATE/ALTER VIEW and MTMV definition builders install a fresh collector and restore
+    // the enclosing one in finally. Parsed source references, not optimizer slots, populate it.
+    private ViewSqlRewriter viewSqlRewriter;
     // Record table id mapping, the key is the hash code of union catalogId,
     // databaseId, tableId
     // the value is the auto-increment id in the cascades context
@@ -1128,12 +1126,15 @@ public class StatementContext implements Closeable {
         this.hasUnknownColStats = hasUnknownColStats;
     }
 
-    public TreeMap<Pair<Integer, Integer>, String> getIndexInSqlToString() {
-        return indexInSqlToString;
+    public ViewSqlRewriter getViewSqlRewriter() {
+        if (viewSqlRewriter == null) {
+            viewSqlRewriter = new ViewSqlRewriter();
+        }
+        return viewSqlRewriter;
     }
 
-    public void addIndexInSqlToString(Pair<Integer, Integer> pair, String replacement) {
-        indexInSqlToString.put(pair, replacement);
+    public void setViewSqlRewriter(ViewSqlRewriter viewSqlRewriter) {
+        this.viewSqlRewriter = viewSqlRewriter;
     }
 
     public void addStatistics(Id id, Statistics statistics) {

@@ -37,7 +37,6 @@ import org.apache.doris.nereids.analyzer.UnboundResultSink;
 import org.apache.doris.nereids.jobs.executor.AbstractBatchJobExecutor;
 import org.apache.doris.nereids.jobs.rewrite.RewriteJob;
 import org.apache.doris.nereids.parser.NereidsParser;
-import org.apache.doris.nereids.properties.OrderKey;
 import org.apache.doris.nereids.properties.PhysicalProperties;
 import org.apache.doris.nereids.rules.analysis.AnalyzeCTE;
 import org.apache.doris.nereids.rules.analysis.BindExpression;
@@ -45,38 +44,26 @@ import org.apache.doris.nereids.rules.analysis.BindRelation;
 import org.apache.doris.nereids.rules.analysis.CheckPolicy;
 import org.apache.doris.nereids.rules.analysis.EliminateLogicalPreAggOnHint;
 import org.apache.doris.nereids.rules.analysis.EliminateLogicalSelectHint;
-import org.apache.doris.nereids.trees.expressions.Expression;
-import org.apache.doris.nereids.trees.expressions.NamedExpression;
 import org.apache.doris.nereids.trees.expressions.Slot;
-import org.apache.doris.nereids.trees.expressions.visitor.DefaultExpressionVisitor;
 import org.apache.doris.nereids.trees.plans.Plan;
 import org.apache.doris.nereids.trees.plans.commands.ExplainCommand.ExplainLevel;
-import org.apache.doris.nereids.trees.plans.logical.LogicalAggregate;
 import org.apache.doris.nereids.trees.plans.logical.LogicalCTEAnchor;
 import org.apache.doris.nereids.trees.plans.logical.LogicalFileSink;
-import org.apache.doris.nereids.trees.plans.logical.LogicalFilter;
-import org.apache.doris.nereids.trees.plans.logical.LogicalGenerate;
-import org.apache.doris.nereids.trees.plans.logical.LogicalHaving;
-import org.apache.doris.nereids.trees.plans.logical.LogicalJoin;
 import org.apache.doris.nereids.trees.plans.logical.LogicalPlan;
-import org.apache.doris.nereids.trees.plans.logical.LogicalProject;
-import org.apache.doris.nereids.trees.plans.logical.LogicalQualify;
-import org.apache.doris.nereids.trees.plans.logical.LogicalRepeat;
-import org.apache.doris.nereids.trees.plans.logical.LogicalSort;
-import org.apache.doris.nereids.trees.plans.logical.LogicalTopN;
+import org.apache.doris.nereids.trees.plans.logical.LogicalResultSink;
 import org.apache.doris.nereids.trees.plans.logical.LogicalView;
-import org.apache.doris.nereids.trees.plans.logical.LogicalWindow;
-import org.apache.doris.nereids.trees.plans.visitor.DefaultPlanVisitor;
 import org.apache.doris.nereids.types.ConnectorComputeVariantType;
 import org.apache.doris.nereids.types.DataType;
 import org.apache.doris.nereids.types.NullType;
 import org.apache.doris.nereids.types.TinyIntType;
 import org.apache.doris.nereids.types.VariantType;
+import org.apache.doris.nereids.util.PlanUtils;
 import org.apache.doris.nereids.util.TypeCoercionUtils;
 import org.apache.doris.nereids.util.Utils;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.tso.MasterTsoProvider;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
@@ -107,21 +94,18 @@ public class BaseViewInfo {
         this.simpleColumnDefinitions = simpleColumnDefinitions;
     }
 
-    protected void analyzeAndFillRewriteSqlMap(String sql, ConnectContext ctx) throws AnalysisException {
+    protected void analyzeViewDefinition(String sql, ConnectContext ctx) throws AnalysisException {
         StatementContext stmtCtx = ctx.getStatementContext();
-        LogicalPlan parsedViewPlan = new NereidsParser().parseForCreateView(sql);
+        LogicalPlan parsedViewPlan = new NereidsParser().parseForCreateView(sql, stmtCtx.getViewSqlRewriter());
         logicalQuery = parsedViewPlan;
         if (logicalQuery instanceof LogicalFileSink) {
             throw new AnalysisException("Not support OUTFILE clause in CREATE VIEW statement");
         }
-        CascadesContext viewContextForStar = CascadesContext.initContext(
+        CascadesContext viewContext = CascadesContext.initContext(
                 stmtCtx, parsedViewPlan, PhysicalProperties.ANY);
-        AnalyzerForCreateView analyzerForStar = new AnalyzerForCreateView(viewContextForStar);
-        analyzerForStar.analyze();
-        analyzedPlan = viewContextForStar.getRewritePlan();
-        // Traverse all slots in the plan, and add the slot's location information
-        // and the fully qualified replacement string to the indexInSqlToString of the StatementContext.
-        analyzedPlan.accept(PlanSlotFinder.INSTANCE, ctx.getStatementContext());
+        AnalyzerForCreateView analyzer = new AnalyzerForCreateView(viewContext);
+        analyzer.analyze();
+        analyzedPlan = viewContext.getRewritePlan();
     }
 
     /**
@@ -146,12 +130,26 @@ public class BaseViewInfo {
     }
 
     protected String rewriteProjectsToUserDefineAlias(String resSql) {
+        List<String> finalColNames = finalCols.stream().map(Column::getName).collect(Collectors.toList());
         if (simpleColumnDefinitions.isEmpty()) {
-            return resSql;
+            PlanUtils.OutermostPlanFinderContext finder = new PlanUtils.OutermostPlanFinderContext();
+            analyzedPlan.accept(PlanUtils.OutermostPlanFinder.INSTANCE, finder);
+            LogicalResultSink<?> sink = (LogicalResultSink<?>) finder.outermostPlan;
+            List<String> queryNames = sink.child().getOutput().stream()
+                    .map(Slot::getName).collect(Collectors.toList());
+            if (queryNames.equals(finalColNames)) {
+                return resSql;
+            }
+            // ResultSink can infer external names such as __add_0. Preserve that existing schema
+            // contract by ordinal without changing aliases referenced by ORDER BY/GROUP BY inside
+            // the query. A CTE column list also handles duplicate internal expression names.
+            String columns = finalColNames.stream()
+                    .map(name -> Utils.qualifiedNameWithBackquote(ImmutableList.of(name)))
+                    .collect(Collectors.joining(", "));
+            return "WITH `__doris_view_definition` (" + columns + ") AS (" + resSql
+                    + ") SELECT * FROM `__doris_view_definition`";
         }
-        return rewriteProjectsToUserDefineAlias(resSql, finalCols.stream()
-                .map(Column::getName)
-                .collect(Collectors.toList()));
+        return rewriteProjectsToUserDefineAlias(resSql, finalColNames);
     }
 
     /**
@@ -328,131 +326,10 @@ public class BaseViewInfo {
         }
     }
 
-    /**
-     * PlanSlotFinder
-     */
-    public static class PlanSlotFinder extends DefaultPlanVisitor<Void, StatementContext> {
-        public static PlanSlotFinder INSTANCE = new PlanSlotFinder();
-
-        @Override
-        public Void visitLogicalView(LogicalView<? extends Plan> alias, StatementContext context) {
-            return null;
-        }
-
-        @Override
-        public Void visitLogicalAggregate(LogicalAggregate<? extends Plan> aggregate, StatementContext context) {
-            for (Expression expr : aggregate.getGroupByExpressions()) {
-                expr.accept(SlotDealer.INSTANCE, context);
-            }
-            for (NamedExpression expr : aggregate.getOutputExpressions()) {
-                expr.accept(SlotDealer.INSTANCE, context);
-            }
-            return aggregate.child().accept(this, context);
-        }
-
-        @Override
-        public Void visitLogicalFilter(LogicalFilter<? extends Plan> filter, StatementContext context) {
-            for (Expression expr : filter.getConjuncts()) {
-                expr.accept(SlotDealer.INSTANCE, context);
-            }
-            return filter.child().accept(this, context);
-        }
-
-        public Void visitLogicalGenerate(LogicalGenerate<? extends Plan> generate, StatementContext context) {
-            for (Expression expr : generate.getGenerators()) {
-                expr.accept(SlotDealer.INSTANCE, context);
-            }
-            return generate.child().accept(this, context);
-        }
-
-        @Override
-        public Void visitLogicalHaving(LogicalHaving<? extends Plan> having, StatementContext context) {
-            for (Expression expr : having.getConjuncts()) {
-                expr.accept(SlotDealer.INSTANCE, context);
-            }
-            return having.child().accept(this, context);
-        }
-
-        @Override
-        public Void visitLogicalJoin(LogicalJoin<? extends Plan, ? extends Plan> join, StatementContext context) {
-            for (Expression expr : join.getOtherJoinConjuncts()) {
-                expr.accept(SlotDealer.INSTANCE, context);
-            }
-            for (Expression expr : join.getHashJoinConjuncts()) {
-                expr.accept(SlotDealer.INSTANCE, context);
-            }
-            join.child(0).accept(this, context);
-            return join.child(1).accept(this, context);
-        }
-
-        @Override
-        public Void visitLogicalProject(LogicalProject<? extends Plan> project, StatementContext context) {
-            for (Expression expr : project.getProjects()) {
-                expr.accept(SlotDealer.INSTANCE, context);
-            }
-            return project.child().accept(this, context);
-        }
-
-        @Override
-        public Void visitLogicalQualify(LogicalQualify<? extends Plan> qualify, StatementContext context) {
-            for (Expression expr : qualify.getConjuncts()) {
-                expr.accept(SlotDealer.INSTANCE, context);
-            }
-            return qualify.child().accept(this, context);
-        }
-
-        @Override
-        public Void visitLogicalRepeat(LogicalRepeat<? extends Plan> repeat, StatementContext context) {
-            for (Expression expr : repeat.getOutputExpressions()) {
-                expr.accept(SlotDealer.INSTANCE, context);
-            }
-            for (List<Expression> exprs : repeat.getGroupingSets()) {
-                for (Expression expr : exprs) {
-                    expr.accept(SlotDealer.INSTANCE, context);
-                }
-            }
-            return repeat.child().accept(this, context);
-        }
-
-        @Override
-        public Void visitLogicalSort(LogicalSort<? extends Plan> sort, StatementContext context) {
-            for (OrderKey key : sort.getOrderKeys()) {
-                key.getExpr().accept(SlotDealer.INSTANCE, context);
-            }
-            return sort.child().accept(this, context);
-        }
-
-        @Override
-        public Void visitLogicalTopN(LogicalTopN<? extends Plan> topN, StatementContext context) {
-            for (OrderKey key : topN.getOrderKeys()) {
-                key.getExpr().accept(SlotDealer.INSTANCE, context);
-            }
-            return topN.child().accept(this, context);
-        }
-
-        @Override
-        public Void visitLogicalWindow(LogicalWindow<? extends Plan> window, StatementContext context) {
-            for (Expression expr : window.getWindowExpressions()) {
-                expr.accept(SlotDealer.INSTANCE, context);
-            }
-            return window.child().accept(this, context);
-        }
-    }
-
-    private static class SlotDealer extends DefaultExpressionVisitor<Void, StatementContext> {
-        private static final SlotDealer INSTANCE = new SlotDealer();
-
-        @Override
-        public Void visitSlot(Slot slot, StatementContext ctx) {
-            slot.getIndexInSqlString().ifPresent(index ->
-                    ctx.addIndexInSqlToString(index,
-                            Utils.qualifiedNameWithBackquote(slot.getQualifier(), slot.getName()))
-            );
-            return null;
-        }
-    }
-
     protected void checkViewSql(String viewSql) {
-        new NereidsParser().parseSingle(viewSql);
+        // Validate the definition that will actually be persisted. A normal parse also prevents
+        // the validation pass from recording source edits into the enclosing statement context.
+        LogicalPlan parsed = new NereidsParser().parseSingle(viewSql);
+        logicalQuery = (LogicalPlan) ((UnboundResultSink<?>) parsed).child();
     }
 }

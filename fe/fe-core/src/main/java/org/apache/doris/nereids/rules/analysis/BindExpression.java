@@ -141,7 +141,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 
 /**
  * BindSlotReference.
@@ -1111,6 +1110,7 @@ public class BindExpression implements AnalysisRuleFactory {
 
                 List<Slot> slots = exceptStarSlots(boundExcepts, boundStar);
 
+                List<NamedExpression> starOutputs = new ArrayList<>(slots.size());
                 List<NamedExpression> replaces = unboundStar.getReplacedAlias();
                 if (!replaces.isEmpty()) {
                     final Map<Expression, Expression> replaceMap = new HashMap<>();
@@ -1137,7 +1137,7 @@ public class BindExpression implements AnalysisRuleFactory {
                         if (s != e) {
                             replaced.add(s);
                         }
-                        boundProjectionsBuilder.add((NamedExpression) e);
+                        starOutputs.add((NamedExpression) e);
                     }
 
                     if (replaced.size() != replaceMap.size()) {
@@ -1145,14 +1145,12 @@ public class BindExpression implements AnalysisRuleFactory {
                         throw new AnalysisException("Invalid replace column name: " + replaceMap.keySet());
                     }
                 } else {
-                    boundProjectionsBuilder.addAll(slots);
+                    starOutputs.addAll(slots);
                 }
 
-                // for create view stmt expand star
-                List<Slot> slotsForLambda = slots;
-                unboundStar.getIndexInSqlString().ifPresent(pair -> {
-                    statementContext.addIndexInSqlToString(pair, toSqlWithBackquote(slotsForLambda));
-                });
+                boundProjectionsBuilder.addAll(starOutputs);
+                unboundStar.getIndexInSqlString().ifPresent(source ->
+                        statementContext.getViewSqlRewriter().expandStar(source, starOutputs));
             }
         }
         project = project.withProjects(boundProjectionsBuilder.build());
@@ -1178,6 +1176,7 @@ public class BindExpression implements AnalysisRuleFactory {
 
                 List<Slot> slots = exceptStarSlots(boundExcepts, boundStar);
 
+                List<NamedExpression> starOutputs = new ArrayList<>(slots.size());
                 List<NamedExpression> replaces = unboundStar.getReplacedAlias();
                 if (!replaces.isEmpty()) {
                     final Map<Expression, Expression> replaceMap = new HashMap<>();
@@ -1204,7 +1203,7 @@ public class BindExpression implements AnalysisRuleFactory {
                         if (s != e) {
                             replaced.add(s);
                         }
-                        boundProjections.add((NamedExpression) e);
+                        starOutputs.add((NamedExpression) e);
                     }
 
                     if (replaced.size() != replaceMap.size()) {
@@ -1212,14 +1211,12 @@ public class BindExpression implements AnalysisRuleFactory {
                         throw new AnalysisException("Invalid replace column name: " + replaceMap.keySet());
                     }
                 } else {
-                    boundProjections.addAll(slots);
+                    starOutputs.addAll(slots);
                 }
 
-                // for create view stmt expand star
-                List<Slot> slotsForLambda = slots;
-                unboundStar.getIndexInSqlString().ifPresent(pair -> {
-                    statementContext.addIndexInSqlToString(pair, toSqlWithBackquote(slotsForLambda));
-                });
+                boundProjections.addAll(starOutputs);
+                unboundStar.getIndexInSqlString().ifPresent(source ->
+                        statementContext.getViewSqlRewriter().expandStar(source, starOutputs));
             }
         }
         return project.withProjects(boundProjections.build());
@@ -1505,6 +1502,8 @@ public class BindExpression implements AnalysisRuleFactory {
                         () -> aggOutputAnalyzer.analyzeToSet(excepts)).get();
                 List<Slot> slots = exceptStarSlots(boundExcepts, (BoundStar) output);
                 boundProjections.addAll(slots);
+                unboundStar.getIndexInSqlString().ifPresent(source ->
+                        ctx.statementContext.getViewSqlRewriter().expandStar(source, slots));
             } else {
                 boundProjections.add(output);
             }
@@ -1779,7 +1778,12 @@ public class BindExpression implements AnalysisRuleFactory {
                         //
                         // The k1 in groupBy use the slot in agg.output: Alias(k + 1).toSlot(),
                         // we should rewrite to: select k + 1 as k1 from tbl group by k + 1
-                        useOutputExpr.add(mappingSlot.getMappingExpression());
+                        Expression mapped = mappingSlot.getMappingExpression();
+                        if (unboundSlot.getIndexInSqlString().isPresent()) {
+                            self.registerViewReference(unboundSlot, mapped, ImmutableList.<String>builder()
+                                    .addAll(mappingSlot.getQualifier()).add(mappingSlot.getName()).build());
+                        }
+                        useOutputExpr.add(mapped);
                     }
                     return new ExpressionAnalyzer.SlotBinding(useOutputExpr.build(), false)
                             .withQualifierOccupancyFrom(slotsInChildren)
@@ -2039,11 +2043,6 @@ public class BindExpression implements AnalysisRuleFactory {
     private interface CustomSlotBinderAnalyzer {
         ExpressionAnalyzer.SlotBinding bindSlot(
                 ExpressionAnalyzer analyzer, UnboundSlot unboundSlot, boolean bindRelationQualifierOnly);
-    }
-
-    public String toSqlWithBackquote(List<Slot> slots) {
-        return slots.stream().map(slot -> ((SlotReference) slot).getQualifiedNameWithBackquote())
-                .collect(Collectors.joining(", "));
     }
 
     private boolean hasAggregateFunction(Expression expression, FunctionRegistry functionRegistry) {

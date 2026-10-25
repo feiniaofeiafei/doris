@@ -31,6 +31,7 @@ import org.apache.doris.nereids.trees.expressions.Expression;
 import org.apache.doris.nereids.trees.plans.commands.ExplainCommand.ExplainLevel;
 import org.apache.doris.nereids.trees.plans.logical.LogicalPlan;
 import org.apache.doris.nereids.types.DataType;
+import org.apache.doris.nereids.util.ViewSqlRewriter;
 import org.apache.doris.plugin.DialectConverterPlugin;
 import org.apache.doris.plugin.PluginMgr;
 import org.apache.doris.qe.GlobalVariable;
@@ -355,10 +356,15 @@ public class NereidsParser {
     }
 
     public LogicalPlan parseForCreateView(String sql) {
+        return parseForCreateView(sql, new ViewSqlRewriter());
+    }
+
+    /** Parse a definition with the same source collector used by its binding pass. */
+    public LogicalPlan parseForCreateView(String sql, ViewSqlRewriter rewriter) {
         CommonTokenStream tokenStream = parseLeanTokens(sql);
         ParserRuleContext tree = toAst(tokenStream, DorisParser::singleStatement);
         LogicalPlanBuilder realLogicalPlanBuilder = new LogicalPlanBuilderForCreateView(
-                getHintMap(sql, tokenStream, DorisParser::selectHint));
+                getHintMap(sql, tokenStream, DorisParser::selectHint), rewriter);
         return (LogicalPlan) realLogicalPlanBuilder.visit(tree);
     }
 

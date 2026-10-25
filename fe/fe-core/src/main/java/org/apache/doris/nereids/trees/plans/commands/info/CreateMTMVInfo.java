@@ -30,7 +30,6 @@ import org.apache.doris.common.ErrorCode;
 import org.apache.doris.common.ErrorReport;
 import org.apache.doris.common.FeConstants;
 import org.apache.doris.common.FeNameFormat;
-import org.apache.doris.common.Pair;
 import org.apache.doris.common.UserException;
 import org.apache.doris.common.util.DebugPointUtil;
 import org.apache.doris.common.util.DynamicPartitionUtil;
@@ -60,12 +59,12 @@ import org.apache.doris.nereids.properties.PhysicalProperties;
 import org.apache.doris.nereids.trees.expressions.Expression;
 import org.apache.doris.nereids.trees.plans.Plan;
 import org.apache.doris.nereids.trees.plans.commands.info.BaseViewInfo.AnalyzerForCreateView;
-import org.apache.doris.nereids.trees.plans.commands.info.BaseViewInfo.PlanSlotFinder;
 import org.apache.doris.nereids.trees.plans.logical.LogicalPlan;
 import org.apache.doris.nereids.types.BigIntType;
 import org.apache.doris.nereids.types.DataType;
 import org.apache.doris.nereids.types.LargeIntType;
 import org.apache.doris.nereids.util.Utils;
+import org.apache.doris.nereids.util.ViewSqlRewriter;
 import org.apache.doris.qe.ConnectContext;
 
 import com.google.common.collect.Lists;
@@ -301,37 +300,32 @@ public class CreateMTMVInfo extends CreateTableInfo {
     }
 
     private void rewriteQuerySql(ConnectContext ctx) {
-        TreeMap<Pair<Integer, Integer>, String> rewriteMap = ctx.getStatementContext().getIndexInSqlToString();
-        TreeMap<Pair<Integer, Integer>, String> snapshot = new TreeMap<>(rewriteMap);
-        rewriteMap.clear();
+        ViewSqlRewriter previous = ctx.getStatementContext().getViewSqlRewriter();
+        ViewSqlRewriter rewriter = new ViewSqlRewriter();
+        ctx.getStatementContext().setViewSqlRewriter(rewriter);
         try {
-            analyzeAndFillRewriteSqlMap(querySql, ctx);
-            querySql = BaseViewInfo.rewriteSql(rewriteMap, querySql);
+            analyzeViewDefinition(querySql, ctx);
+            querySql = rewriter.rewrite(querySql);
             if (isEnableIvm() && !simpleColumnDefinitions.isEmpty()) {
                 querySql = BaseViewInfo.rewriteProjectsToUserDefineAlias(querySql, simpleColumnDefinitions.stream()
                         .map(SimpleColumnDefinition::getName)
                         .collect(Collectors.toList()));
             }
         } finally {
-            rewriteMap.clear();
-            rewriteMap.putAll(snapshot);
+            ctx.getStatementContext().setViewSqlRewriter(previous);
         }
     }
 
-    private void analyzeAndFillRewriteSqlMap(String sql, ConnectContext ctx) {
+    private void analyzeViewDefinition(String sql, ConnectContext ctx) {
         StatementContext stmtCtx = ctx.getStatementContext();
-        LogicalPlan parsedViewPlan = new NereidsParser().parseForCreateView(sql);
+        LogicalPlan parsedViewPlan = new NereidsParser().parseForCreateView(sql, stmtCtx.getViewSqlRewriter());
         if (parsedViewPlan instanceof UnboundResultSink) {
             parsedViewPlan = (LogicalPlan) ((UnboundResultSink<?>) parsedViewPlan).child();
         }
-        CascadesContext viewContextForStar = CascadesContext.initContext(
+        CascadesContext viewContext = CascadesContext.initContext(
                 stmtCtx, parsedViewPlan, PhysicalProperties.ANY);
-        AnalyzerForCreateView analyzerForStar = new AnalyzerForCreateView(viewContextForStar);
-        analyzerForStar.analyze();
-        Plan analyzedPlan = viewContextForStar.getRewritePlan();
-        // Traverse all slots in the plan, and add the slot's location information
-        // and the fully qualified replacement string to the indexInSqlToString of the StatementContext.
-        analyzedPlan.accept(PlanSlotFinder.INSTANCE, ctx.getStatementContext());
+        AnalyzerForCreateView analyzer = new AnalyzerForCreateView(viewContext);
+        analyzer.analyze();
     }
 
     private void analyzeProperties() {

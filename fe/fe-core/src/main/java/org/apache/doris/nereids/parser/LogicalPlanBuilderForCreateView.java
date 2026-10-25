@@ -27,9 +27,11 @@ import org.apache.doris.nereids.DorisParser.LateralViewContext;
 import org.apache.doris.nereids.DorisParser.MultipartIdentifierContext;
 import org.apache.doris.nereids.DorisParser.NamedExpressionContext;
 import org.apache.doris.nereids.DorisParser.PrimaryExpressionContext;
+import org.apache.doris.nereids.DorisParser.ReplaceContext;
 import org.apache.doris.nereids.DorisParser.StarContext;
 import org.apache.doris.nereids.DorisParser.TableAliasContext;
 import org.apache.doris.nereids.DorisParser.TableNameContext;
+import org.apache.doris.nereids.analyzer.UnboundAlias;
 import org.apache.doris.nereids.analyzer.UnboundFunction;
 import org.apache.doris.nereids.analyzer.UnboundRelation;
 import org.apache.doris.nereids.analyzer.UnboundSlot;
@@ -40,7 +42,7 @@ import org.apache.doris.nereids.trees.plans.Plan;
 import org.apache.doris.nereids.trees.plans.logical.LogicalPlan;
 import org.apache.doris.nereids.trees.plans.logical.LogicalSubQueryAlias;
 import org.apache.doris.nereids.util.Utils;
-import org.apache.doris.qe.ConnectContext;
+import org.apache.doris.nereids.util.ViewSqlRewriter;
 
 import com.google.common.collect.ImmutableList;
 import org.antlr.v4.runtime.ParserRuleContext;
@@ -49,18 +51,21 @@ import java.util.Map;
 
 /**LogicalPlanBuilderForCreateView*/
 public class LogicalPlanBuilderForCreateView extends LogicalPlanBuilder {
-    public LogicalPlanBuilderForCreateView(Map<Integer, ParserRuleContext> selectHintMap) {
+    private final ViewSqlRewriter rewriter;
+
+    public LogicalPlanBuilderForCreateView(Map<Integer, ParserRuleContext> selectHintMap, ViewSqlRewriter rewriter) {
         super(selectHintMap);
+        this.rewriter = rewriter;
     }
 
     @Override
     protected LogicalPlan withGenerate(LogicalPlan plan, LateralViewContext ctx) {
-        ConnectContext.get().getStatementContext().addIndexInSqlToString(
+        rewriter.replace(
                 Pair.of(ctx.tableName.start.getStartIndex(),
                         ctx.tableName.stop.getStopIndex()),
                 Utils.qualifiedNameWithBackquote(ImmutableList.of(ctx.tableName.getText())));
         for (IdentifierContext colCtx : ctx.columnNames) {
-            ConnectContext.get().getStatementContext().addIndexInSqlToString(
+            rewriter.replace(
                     Pair.of(colCtx.start.getStartIndex(),
                             colCtx.stop.getStopIndex()),
                     Utils.qualifiedNameWithBackquote(ImmutableList.of(colCtx.getText())));
@@ -70,13 +75,13 @@ public class LogicalPlanBuilderForCreateView extends LogicalPlanBuilder {
 
     @Override
     public LogicalSubQueryAlias<Plan> visitAliasQuery(AliasQueryContext ctx) {
-        ConnectContext.get().getStatementContext().addIndexInSqlToString(
+        rewriter.replace(
                 Pair.of(ctx.identifier().start.getStartIndex(),
                         ctx.identifier().stop.getStopIndex()),
                 Utils.qualifiedNameWithBackquote(ImmutableList.of(ctx.identifier().getText())));
         if (ctx.columnAliases() != null) {
             for (IdentifierContext colCtx : ctx.columnAliases().identifier()) {
-                ConnectContext.get().getStatementContext().addIndexInSqlToString(
+                rewriter.replace(
                         Pair.of(colCtx.start.getStartIndex(),
                                 colCtx.stop.getStopIndex()),
                         Utils.qualifiedNameWithBackquote(ImmutableList.of(colCtx.getText())));
@@ -91,7 +96,7 @@ public class LogicalPlanBuilderForCreateView extends LogicalPlanBuilder {
             return plan;
         }
         String alias = ctx.strictIdentifier().getText();
-        ConnectContext.get().getStatementContext().addIndexInSqlToString(
+        rewriter.replace(
                 Pair.of(ctx.strictIdentifier().start.getStartIndex(),
                         ctx.strictIdentifier().stop.getStopIndex()),
                 Utils.qualifiedNameWithBackquote(ImmutableList.of(alias)));
@@ -116,19 +121,42 @@ public class LogicalPlanBuilderForCreateView extends LogicalPlanBuilder {
     public Expression visitStar(StarContext ctx) {
         Expression expr = super.visitStar(ctx);
         UnboundStar star = (UnboundStar) expr;
-        return star.withIndexInSql(Pair.of(ctx.start.getStartIndex(), ctx.stop.getStopIndex()));
+        Pair<Integer, Integer> source = Pair.of(ctx.start.getStartIndex(), ctx.stop.getStopIndex());
+        for (DorisParser.ExceptOrReplaceContext clause : ctx.exceptOrReplace()) {
+            if (clause instanceof ReplaceContext) {
+                for (NamedExpressionContext replacement : ((ReplaceContext) clause).namedExpressionSeq()
+                        .namedExpression()) {
+                    rewriter.registerStarExpression(source,
+                            visitIdentifierOrText(replacement.identifierOrText()),
+                            Pair.of(replacement.expression().start.getStartIndex(),
+                                    replacement.expression().stop.getStopIndex()));
+                }
+            }
+        }
+        return star.withIndexInSql(source);
     }
 
     @Override
     public NamedExpression visitNamedExpression(NamedExpressionContext ctx) {
+        NamedExpression expression = super.visitNamedExpression(ctx);
         if (ctx.identifierOrText() != null) {
             String alias = visitIdentifierOrText(ctx.identifierOrText());
-            ConnectContext.get().getStatementContext().addIndexInSqlToString(
+            rewriter.replace(
                     Pair.of(ctx.identifierOrText().start.getStartIndex(),
                             ctx.identifierOrText().stop.getStopIndex()),
                     Utils.qualifiedNameWithBackquote(ImmutableList.of(alias)));
+        } else {
+            Pair<Integer, Integer> source = Pair.of(ctx.expression().start.getStartIndex(),
+                    ctx.expression().stop.getStopIndex());
+            if (expression instanceof UnboundAlias) {
+                rewriter.preserveOutputName(
+                        source, ((UnboundAlias) expression).getAlias().get());
+            } else if (expression instanceof UnboundSlot) {
+                rewriter.registerColumnOutput(
+                        ((UnboundSlot) expression).getIndexInSqlString().get(), source);
+            }
         }
-        return super.visitNamedExpression(ctx);
+        return expression;
     }
 
     @Override
@@ -148,9 +176,13 @@ public class LogicalPlanBuilderForCreateView extends LogicalPlanBuilder {
     @Override
     protected Expression buildDereference(
             Expression base, DereferenceContext ctx, PrimaryExpressionContext originContext) {
-        UnboundSlot slot = (UnboundSlot) super.buildDereference(base, ctx, originContext);
-        return slot.withIndexInSql(Pair.of(
-                originContext.start.getStartIndex(), ctx.stop.getStopIndex()));
+        Expression expression = super.buildDereference(base, ctx, originContext);
+        if (expression instanceof UnboundSlot) {
+            return ((UnboundSlot) expression).withIndexInSql(Pair.of(
+                    originContext.start.getStartIndex(), ctx.stop.getStopIndex()));
+        }
+        // Dereferencing an expression (for example named_struct(...).field) keeps its source syntax.
+        return expression;
     }
 
     @Override
