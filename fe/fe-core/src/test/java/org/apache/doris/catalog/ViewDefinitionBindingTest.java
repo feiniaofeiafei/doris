@@ -49,9 +49,11 @@ public class ViewDefinitionBindingTest extends TestWithFeService {
                 + " from binding_source s where s.k > 0 and s.k < 10");
 
         View view = assertDefinitionAnalyzes("repeated_references", "first_k", "next_k");
-        Assertions.assertEquals("select `s`.`k` as `first_k`, `s`.`k` + 1 as `next_k`"
+        Assertions.assertEquals("select `internal`.`view_binding`.`s`.`k` as `first_k`,"
+                        + " `internal`.`view_binding`.`s`.`k` + 1 as `next_k`"
                         + " from `internal`.`view_binding`.`binding_source` `s`"
-                        + " where `s`.`k` > 0 and `s`.`k` < 10",
+                        + " where `internal`.`view_binding`.`s`.`k` > 0"
+                        + " and `internal`.`view_binding`.`s`.`k` < 10",
                 view.getInlineViewDef());
     }
 
@@ -96,13 +98,15 @@ public class ViewDefinitionBindingTest extends TestWithFeService {
 
     @Test
     public void testDerivedRelationKeepsImplicitOutputNames() throws Exception {
+        // Subqueries keep the expression ID, so output naming can trace back to the arithmetic alias.
         createView("create view subquery_implicit_name as select q.`k + 1`"
                 + " from (select k + 1 from binding_source) q");
         assertDefinitionAnalyzes("subquery_implicit_name", "__add_0");
 
+        // CTE consumers have new expression IDs and preserve their producer's output names.
         createView("create view cte_implicit_name as with q as (select k + 1 from binding_source)"
                 + " select q.`k + 1` from q");
-        assertDefinitionAnalyzes("cte_implicit_name", "__add_0");
+        assertDefinitionAnalyzes("cte_implicit_name", "k + 1");
     }
 
     @Test
@@ -154,9 +158,11 @@ public class ViewDefinitionBindingTest extends TestWithFeService {
                 + " where inner_row.k = outer_row.k and inner_row.v > outer_row.v)");
 
         View view = assertDefinitionAnalyzes("correlated_references", "k");
-        Assertions.assertTrue(view.getInlineViewDef().contains("`inner_row`.`k` = `outer_row`.`k`"),
+        Assertions.assertTrue(view.getInlineViewDef().contains("`internal`.`view_binding`.`inner_row`.`k`"
+                        + " = `internal`.`view_binding`.`outer_row`.`k`"),
                 view.getInlineViewDef());
-        Assertions.assertTrue(view.getInlineViewDef().contains("`inner_row`.`v` > `outer_row`.`v`"),
+        Assertions.assertTrue(view.getInlineViewDef().contains("`internal`.`view_binding`.`inner_row`.`v`"
+                        + " > `internal`.`view_binding`.`outer_row`.`v`"),
                 view.getInlineViewDef());
     }
 
@@ -228,8 +234,9 @@ public class ViewDefinitionBindingTest extends TestWithFeService {
                 + " from binding_source x order by x.v");
 
         View view = assertDefinitionAnalyzes("relation_and_output_alias", "x");
-        Assertions.assertEquals("select `x`.`v` as `x` from `internal`.`view_binding`.`binding_source` `x`"
-                + " order by `x`.`v`", view.getInlineViewDef());
+        Assertions.assertEquals("select `internal`.`view_binding`.`x`.`v` as `x`"
+                + " from `internal`.`view_binding`.`binding_source` `x`"
+                + " order by `internal`.`view_binding`.`x`.`v`", view.getInlineViewDef());
     }
 
     @Test
